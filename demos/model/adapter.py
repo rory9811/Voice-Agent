@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Mapping
 
 from demos.model import wire as sw
@@ -28,6 +29,10 @@ PROTOCOL_TOKENS = (
     "<backend>",
     "</backend>",
 )
+
+# A live web client pulls output at least once a second. A session silent for
+# longer lost its client (crash, network drop) and may be replaced by a new one.
+SESSION_LEASE_S = 15.0
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +117,7 @@ class _Session:
         "prefill_attempts",
         "output_requested",
         "output_inflight",
+        "last_seen",
     )
 
     def __init__(self, session_id: str, incarnation: int, model: str) -> None:
@@ -138,6 +144,7 @@ class _Session:
         self.prefill_attempts: dict[str, dict[str, Any]] = {}
         self.output_requested = False
         self.output_inflight = False
+        self.last_seen = time.monotonic()
 
 
 # ---------------------------------------------------------------------------
@@ -261,6 +268,10 @@ class RealtimeVenusOmniAdapter:
             raise AdapterError(f"unsupported protocol_version: {protocol!r}")
         session_id = str(req["session_id"])
         model = str(req["model"])
+        if model != self._model_name:
+            raise AdapterError(
+                f"model mismatch: server serves {self._model_name}, client requested {model}"
+            )
         try:
             # Older non-browser clients keep the checkpoint's original behavior.
             length_penalty = DuplexSettings(
@@ -269,8 +280,11 @@ class RealtimeVenusOmniAdapter:
         except ValueError as exc:
             raise AdapterError(str(exc)) from exc
         async with self._open_lock:
-            if self._session is not None and not self._session.closed:
-                raise SessionBusy("a session is already open; max_sessions=1")
+            old = self._session
+            if old is not None and not old.closed:
+                if time.monotonic() - old.last_seen <= SESSION_LEASE_S:
+                    raise SessionBusy("a session is already open; max_sessions=1")
+                await self._close_locked(old, "lease_expired")
             incarnation = (self._session.incarnation + 1) if self._session else 1
             sess = _Session(session_id, incarnation, model)
             # Re-prepare the model for this session (prepare is session-scoped,
@@ -493,30 +507,34 @@ class RealtimeVenusOmniAdapter:
         reason = str(req.get("reason", "client_close"))
         sess = self._require(req, allow_closed=True)
         async with self._open_lock:
-            if sess.closed and sess.stop.is_set():
-                return sw.session_closed(
-                    session_id=sess.session_id,
-                    incarnation=sess.incarnation,
-                    closed_at_ms=sw.now_ms(),
-                )
-            sess.closed = True
-            sess.stop.set()
-            self._wakeup.set()
-            # Unblock any pending next_output_step pull.
-            sess.queue.put_nowait(None)
-            # Finish the in-flight worker before destroying KV. Keep the open
-            # lock until cleanup ends, so a browser reconnect cannot race it.
-            stop_fn = getattr(self._official, "set_session_stop", None)
-            if callable(stop_fn):
-                stop_fn()
-            async with self._turn_lock:
-                await asyncio.to_thread(self._teardown_model)
-            if sess.driver is not None:
-                sess.driver.cancel()
-                try:
-                    await sess.driver
-                except asyncio.CancelledError:
-                    pass
+            return await self._close_locked(sess, reason)
+
+    async def _close_locked(self, sess: _Session, reason: str) -> dict[str, Any]:
+        """Close ``sess``; the caller holds ``_open_lock``."""
+        if sess.closed and sess.stop.is_set():
+            return sw.session_closed(
+                session_id=sess.session_id,
+                incarnation=sess.incarnation,
+                closed_at_ms=sw.now_ms(),
+            )
+        sess.closed = True
+        sess.stop.set()
+        self._wakeup.set()
+        # Unblock any pending next_output_step pull.
+        sess.queue.put_nowait(None)
+        # Finish the in-flight worker before destroying KV. Keep the open
+        # lock until cleanup ends, so a browser reconnect cannot race it.
+        stop_fn = getattr(self._official, "set_session_stop", None)
+        if callable(stop_fn):
+            stop_fn()
+        async with self._turn_lock:
+            await asyncio.to_thread(self._teardown_model)
+        if sess.driver is not None:
+            sess.driver.cancel()
+            try:
+                await sess.driver
+            except asyncio.CancelledError:
+                pass
         _LOG.info("close_session %s reason=%s", sess.session_id, reason)
         return sw.session_closed(
             session_id=sess.session_id,
@@ -747,6 +765,7 @@ class RealtimeVenusOmniAdapter:
             raise UnknownSession(f"unknown session: {session_id}")
         if sess.incarnation != incarnation:
             raise IncarnationMismatch("session incarnation does not match")
+        sess.last_seen = time.monotonic()
         if sess.closed and not allow_closed:
             raise SessionClosedError(f"session closed: {session_id}")
         return sess

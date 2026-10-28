@@ -23,6 +23,17 @@ from demos.variants import model_name
 
 _LOG = logging.getLogger("demos.model.server")
 
+# Data files only: the web side loads them with the stock Qwen2 fast tokenizer,
+# so no checkpoint code is shipped to (or executed on) the client.
+TOKENIZER_FILES = (
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
+    "added_tokens.json",
+    "vocab.json",
+    "merges.txt",
+)
+
 
 @dataclass
 class _ServerConfig:
@@ -109,7 +120,23 @@ def create_app(config: _ServerConfig) -> FastAPI:
             return JSONResponse(status_code=503, content={"ready": False})
         a = adapter()
         h = await a.health()
-        return {"ready": True, **h}
+        return {
+            "ready": True,
+            "model_type": config.model_type,
+            "model": config.model_name,
+            **h,
+        }
+
+    @app.get("/tokenizer")
+    async def tokenizer():
+        root = Path(config.model_path)
+        return {
+            "files": {
+                name: (root / name).read_text(encoding="utf-8")
+                for name in TOKENIZER_FILES
+                if (root / name).is_file()
+            }
+        }
 
     @app.post("/sessions")
     async def open_session(req: Request):
