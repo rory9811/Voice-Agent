@@ -1,4 +1,4 @@
-# Realtime-Venus-Omni inference
+# Realtime-Venus model server (GPU host)
 # This compatibility package supplies the checkpoint's speech decoder.
 minicpmo-utils[tts]==1.0.6
 torch==2.4.0
@@ -11,11 +11,9 @@ sentencepiece==0.2.0
 safetensors>=0.5,<1
 resampy>=0.4,<0.5
 setuptools>=68,<81
+# Camera frames are decoded on the model side.
+Pillow>=10.4,<12
 
-# Realtime-Venus-Harness media dependencies
--r ../harness/requirements.txt
-
-# Browser and model HTTP services
-httpx[socks]>=0.28,<0.29
+# Model HTTP API
 fastapi>=0.115,<1
 uvicorn[standard]>=0.30,<1

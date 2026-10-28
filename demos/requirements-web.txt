@@ -1,0 +1,11 @@
+# Realtime-Venus web service, Harness and tokenizer (local computer; no torch)
+-r ../harness/requirements.txt
+# Tokenizer only: decodes model token IDs fetched from the model server.
+transformers==4.51.3
+
+# Browser service and model HTTP client
+httpx[socks]>=0.28,<0.29
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+# Build backend for the editable Harness install (pyproject.toml).
+setuptools>=68,<81

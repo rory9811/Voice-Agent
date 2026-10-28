@@ -1,5 +1,5 @@
-# Shared dependencies for the frontend inference examples and the Demo.
--r demos/requirements.txt
+# Dependencies for the frontend inference examples (same as the model server).
+-r demos/requirements-model.txt
 
 # Shared checkpoint downloader.
 huggingface_hub>=0.34

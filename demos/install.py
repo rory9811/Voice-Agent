@@ -1,4 +1,4 @@
-"""Bootstrap the complete stack without changing the system Python environment."""
+"""Bootstrap one deployment role (model server or web service) without changing the system Python."""
 
 from __future__ import annotations
 
@@ -17,10 +17,35 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "runtime"
 CODEX_VERSION = "0.153.4"
+ROLES = {
+    "model": {
+        "systems": ("Linux",),
+        "requirements": "demos/requirements-model.txt",
+        "check": 'import demos.model.server, torch, torchaudio, transformers, stepaudio2, librosa, PIL; print("Model imports: OK; CUDA:", torch.cuda.is_available())',
+        "next": "\nInstalled. Set model_server.json, then run: bash start.sh model",
+    },
+    "web": {
+        "systems": ("Linux", "Darwin"),
+        "requirements": "demos/requirements-web.txt",
+        "check": 'import demos.server.app, transformers; print("Application imports: OK")',
+        "next": "\nInstalled. Keep the SSH tunnel to the model server open, set config.json, then run: bash start.sh web\n"
+        "Existing Codex authentication is reused; first startup can guide device login.",
+    },
+}
 
 
 def run(command, **kwargs):
     subprocess.run([str(part) for part in command], check=True, **kwargs)
+
+
+def codex_asset(system, machine):
+    architecture = {"x86_64": "x86_64", "aarch64": "aarch64", "arm64": "aarch64"}.get(machine)
+    target = {"Linux": "unknown-linux-musl", "Darwin": "apple-darwin"}.get(system)
+    if not architecture or not target:
+        raise RuntimeError(
+            "The automatic Codex installer supports Linux and macOS on x86_64 or arm64."
+        )
+    return f"codex-{architecture}-{target}"
 
 
 def install_codex():
@@ -32,12 +57,7 @@ def install_codex():
     if local.is_file():
         run([local, "--version"])
         return
-    architecture = {"x86_64": "x86_64", "aarch64": "aarch64"}.get(platform.machine())
-    if not architecture:
-        raise RuntimeError(
-            "The automatic Codex installer supports Linux x86_64 and aarch64."
-        )
-    name = f"codex-{architecture}-unknown-linux-musl"
+    name = codex_asset(platform.system(), platform.machine())
     url = os.getenv(
         "CODEX_DOWNLOAD_URL",
         f"https://github.com/openai/codex/releases/download/rust-v{CODEX_VERSION}/{name}.tar.gz",
@@ -95,15 +115,19 @@ def preferred_python():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "role",
+        choices=ROLES,
+        help="model: GPU server running the model; web: local computer running the browser service, Harness and Codex",
+    )
+    parser.add_argument(
         "--python",
         default=preferred_python(),
         help="Python executable or version for the isolated environment",
     )
     args = parser.parse_args()
-    if platform.system() != "Linux":
-        parser.error(
-            "Run the server installer on Linux; use any modern browser on your local computer."
-        )
+    role = ROLES[args.role]
+    if platform.system() not in role["systems"]:
+        parser.error(f"Install the {args.role} role on {' or '.join(role['systems'])}.")
     RUNTIME.mkdir(exist_ok=True)
     with (RUNTIME / "install.lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -156,8 +180,8 @@ def main():
             ]
         )
         install = [uv, "pip", "install", "--python", python]
-        print("Installing model and application dependencies...", flush=True)
-        run([*install, "-r", ROOT / "demos/requirements.txt"], env=env)
+        print(f"Installing {args.role} dependencies...", flush=True)
+        run([*install, "-r", ROOT / role["requirements"]], env=env)
         run(
             [
                 *install,
@@ -168,28 +192,10 @@ def main():
             ],
             env=env,
         )
-        install_codex()
-        run(
-            [
-                python,
-                "-c",
-                'import demos.server.app; import demos.model.server; print("Application imports: OK")',
-            ],
-            cwd=ROOT,
-        )
-        run(
-            [
-                python,
-                "-c",
-                'import torch, torchaudio, transformers, stepaudio2; print("Model dependencies: OK; CUDA:", torch.cuda.is_available())',
-            ]
-        )
-        print(
-            "\nInstalled. Put your checkpoint in model_weight/ and run: bash start.sh"
-        )
-        print(
-            "Existing Codex authentication is reused; first startup can guide device login."
-        )
+        if args.role == "web":
+            install_codex()
+        run([python, "-c", role["check"]], cwd=ROOT)
+        print(role["next"])
 
 
 if __name__ == "__main__":
