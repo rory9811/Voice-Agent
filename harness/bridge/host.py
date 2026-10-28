@@ -790,7 +790,7 @@ class VenusOmniServingHost:
         if output.total_token_ids:
             model_step = await self.session.consume_total_ids(
                 token_ids,
-                at_ms=output.at_ms,
+                at_ms=self._clock(),
                 cutoff_sequence=output.input_seq_cutoff,
                 delegate_audio_filtered=(
                     self.opened.capabilities.delegate_audio_filtered
@@ -933,7 +933,7 @@ class VenusOmniServingHost:
         generation: _GenerationState,
     ) -> str:
         tail = await self.session.finish_model_turn(
-            at_ms=output.at_ms,
+            at_ms=self._clock(),
             caused_by_work_id=generation.caused_by_work_id,
             **(
                 {"caused_by_feedback_id": generation.feedback_id}
