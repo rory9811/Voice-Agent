@@ -51,6 +51,14 @@ class RemoteSessionClosed(RemoteServingError):
     pass
 
 
+class RemoteModelUnavailable(RemoteServingError):
+    """The model cannot serve this client; ``code`` tells the browser why."""
+
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.code = code  # model_busy | model_mismatch | model_unreachable
+
+
 def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
 
@@ -92,14 +100,24 @@ class RemoteOmniServingPort:
         params: Mapping[str, Any] | None = None,
         json: Any | None = None,
     ) -> dict[str, Any]:
-        resp = await self._client.request(method, path, params=params, json=json)
+        try:
+            resp = await self._client.request(method, path, params=params, json=json)
+        except httpx.TransportError as exc:
+            raise RemoteModelUnavailable(
+                "model_unreachable", f"model server unreachable at {self._base_url}: {exc}"
+            ) from exc
         if resp.status_code == 200:
             return resp.json()
-        detail = ""
+        detail, kind = "", ""
         try:
-            detail = resp.json().get("error", resp.text)
+            body = resp.json()
+            detail, kind = body.get("error", resp.text), body.get("type", "")
         except Exception:  # noqa: BLE001
             detail = resp.text
+        if kind == "ModelMismatch":
+            raise RemoteModelUnavailable("model_mismatch", str(detail))
+        if kind == "SessionBusy" and path == "/sessions":
+            raise RemoteModelUnavailable("model_busy", str(detail))
         if resp.status_code == 408:
             raise RemoteOutputTimeout(str(detail))
         if resp.status_code == 409 and path.endswith("/prefill"):
@@ -302,4 +320,5 @@ __all__ = [
     "RemoteServingError",
     "RemoteOutputTimeout",
     "RemoteSessionClosed",
+    "RemoteModelUnavailable",
 ]

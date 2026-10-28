@@ -60,6 +60,10 @@ class SessionBusy(AdapterError):
     status_code = 409
 
 
+class ModelMismatch(AdapterError):
+    status_code = 400
+
+
 class Unsupported(AdapterError):
     status_code = 400
 
@@ -269,7 +273,7 @@ class RealtimeVenusOmniAdapter:
         session_id = str(req["session_id"])
         model = str(req["model"])
         if model != self._model_name:
-            raise AdapterError(
+            raise ModelMismatch(
                 f"model mismatch: server serves {self._model_name}, client requested {model}"
             )
         try:

@@ -12,6 +12,13 @@ class ProcessStartTests(unittest.TestCase):
         self.assertTrue(first)
         self.assertEqual(process_start(os.getpid()), first)
 
+    def test_process_start_ignores_locale_and_timezone(self):
+        from unittest.mock import patch
+
+        first = process_start(os.getpid())
+        with patch.dict(os.environ, {"LC_ALL": "zh_CN.UTF-8", "LANG": "zh_CN.UTF-8", "TZ": "Asia/Tokyo"}):
+            self.assertEqual(process_start(os.getpid()), first)
+
     def test_reaped_child_has_no_start(self):
         child = subprocess.Popen([sys.executable, "-c", "pass"])
         child.wait()

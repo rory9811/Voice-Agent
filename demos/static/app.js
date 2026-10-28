@@ -413,12 +413,15 @@ function connect(epoch) {
       }
       if (message.type === "fatal_error") {
         serverRejected = true;
+        const known = {
+          busy: "busy",
+          configuration: "notConfigured",
+          model_busy: "modelBusy",
+          model_mismatch: "modelMismatch",
+          model_unreachable: "modelUnreachable",
+        }[message.code];
         const error = Error(
-          message.code === "busy"
-            ? t("busy")
-            : message.code === "configuration"
-              ? t("notConfigured")
-              : message.error || t("connectionFailed"),
+          known ? t(known) : message.error || t("connectionFailed"),
         );
         error.code = message.code;
         if (!settled) {

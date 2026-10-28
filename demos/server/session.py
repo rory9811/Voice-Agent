@@ -13,6 +13,7 @@ from harness.core.speech import limit_spoken_sentences
 
 import anyio
 
+from demos.model.client import RemoteModelUnavailable
 from harness.bridge.host import AudioDisposition, VenusOmniServingHost
 from harness.core.models import AudioChunk, VideoFrame
 
@@ -99,13 +100,14 @@ class WebAgentSession:
         except Exception as exc:
             if type(exc).__name__ not in {"WebSocketDisconnect", "ClientDisconnected"}:
                 logger.exception("Venus Web session failed")
+                failure = {
+                    "type": "fatal_error",
+                    "error": "Venus 会话启动或运行失败，请查看本机 runtime/logs/web.log。",
+                }
+                if isinstance(exc, RemoteModelUnavailable):
+                    failure.update(code=exc.code, error=str(exc))
                 with suppress(Exception):
-                    await self.send(
-                        {
-                            "type": "fatal_error",
-                            "error": "Venus 会话启动或运行失败，请检查服务端日志。",
-                        }
-                    )
+                    await self.send(failure)
         finally:
             self._closing = True
             with anyio.CancelScope(shield=True):

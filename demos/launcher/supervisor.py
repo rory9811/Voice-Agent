@@ -7,6 +7,7 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -15,11 +16,23 @@ from pathlib import Path
 
 
 def process_start(pid: int) -> str | None:
-    """Process start time (Linux and macOS) prevents acting on a recycled PID."""
+    """Process start time prevents acting on a recycled PID.
+
+    Linux reads kernel start ticks (GPU containers often lack ``ps``); macOS has
+    no /proc, so it asks ``ps`` with a fixed locale and timezone, keeping the
+    value identical across shells.
+    """
+    if sys.platform.startswith("linux"):
+        try:
+            fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+            return None if fields[0] == "Z" else fields[19]
+        except (OSError, IndexError):
+            return None
     try:
         result = subprocess.run(
             ["ps", "-o", "stat=,lstart=", "-p", str(pid)],
             capture_output=True, text=True, timeout=5,
+            env={**os.environ, "LC_ALL": "C", "TZ": "UTC"},
         )
     except (OSError, subprocess.SubprocessError):
         return None
