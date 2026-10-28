@@ -22,13 +22,13 @@ ROLES = {
         "systems": ("Linux",),
         "requirements": "demos/requirements-model.txt",
         "check": 'import demos.model.server, torch, torchaudio, transformers, stepaudio2, librosa, PIL; print("Model imports: OK; CUDA:", torch.cuda.is_available())',
-        "next": "\nInstalled. Set model_server.json, then run: bash start.sh model",
+        "next": "\nInstalled. Set model_server.json and VENUS_MODEL_TOKEN, then run: bash start.sh model",
     },
     "web": {
         "systems": ("Linux", "Darwin"),
         "requirements": "demos/requirements-web.txt",
         "check": 'import demos.server.app, transformers; print("Application imports: OK")',
-        "next": "\nInstalled. Keep the SSH tunnel to the model server open, set config.json, then run: bash start.sh web\n"
+        "next": "\nInstalled. Set model.url in config.json and VENUS_MODEL_TOKEN, then run: bash start.sh web\n"
         "Existing Codex authentication is reused; first startup can guide device login.",
     },
 }

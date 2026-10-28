@@ -59,7 +59,7 @@ def write_state(path: Path, data: dict) -> None:
     temporary.replace(path)
 
 
-# Health probes target the local service or the SSH tunnel; never a proxy.
+# Health probes target this machine's own service; never a proxy.
 _DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 

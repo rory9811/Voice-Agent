@@ -7,18 +7,19 @@ import uvicorn
 
 from .app import create_app
 from .resources import fetch_model
+from demos.model.settings import model_token
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8032)
-    parser.add_argument("--model-server", required=True, help="Model server URL, e.g. the SSH tunnel http://127.0.0.1:8031")
+    parser.add_argument("--model-server", required=True, help="Model server URL, e.g. http://10.194.99.8:8031")
     parser.add_argument("--config", required=True)
     parser.add_argument("--demo-config", help="Demo deployment JSON for frontend settings")
     args = parser.parse_args()
     try:
-        model = fetch_model(args.model_server)
+        model = fetch_model(args.model_server, model_token())
     except RuntimeError as exc:
         print(f"Startup failed: {exc}", file=sys.stderr)
         raise SystemExit(1) from None

@@ -150,29 +150,35 @@ Both scripts accept `--system-prompt` and `--prompt`; see the [Audio guide](fron
 
 ### 3. Talk to Realtime-Venus
 
-The model runs on a GPU server (**at least one NVIDIA A100**); the web service, Harness, and Codex run on your computer. They connect through an SSH tunnel.
+The model runs on a GPU server (**at least one NVIDIA A100**); the web service, Harness, and Codex run on your computer, which calls the model's HTTP API directly over the network (for example through your company VPN).
 
-**① Server: start the model.** Edit [`model_server.json`](model_server.json): set `type` to `audio` (microphone and audio upload) or `video` (also accepts `omni`; camera with microphone and video upload), and point `path` at the matching downloaded checkpoint. Then run:
+**① Both machines: set a shared token.** The model API is protected by one shared secret. Generate it once:
+
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(24))"
+```
+
+Set it on the server and on your computer before starting (add the line to `~/.bashrc` or `~/.zshrc` to keep it):
+
+```bash
+export VENUS_MODEL_TOKEN=<the generated token>
+```
+
+**② Server: start the model.** Edit [`model_server.json`](model_server.json): set `type` to `audio` (microphone and audio upload) or `video` (also accepts `omni`; camera with microphone and video upload), point `path` at the matching downloaded checkpoint, and set `host` to `0.0.0.0` (or the server's VPN address) so your computer can reach it. Then run:
 
 ```bash
 bash start.sh model --detach
 ```
 
-The model API listens only on the server's `127.0.0.1:8031`; it is never exposed to the network.
+The model refuses to listen on a network address without `VENUS_MODEL_TOKEN`. Make sure its port (8031 by default) is reachable from your computer; ask your network administrator if the VPN only allows certain ports.
 
-**② Your computer: open the tunnel.** Keep this running, replacing `user@server` with your SSH login:
-
-```bash
-ssh -N -L 8031:127.0.0.1:8031 user@server
-```
-
-**③ Your computer: start the web service.** Root [`config.json`](config.json) already points `model.url` at the tunnel (`http://127.0.0.1:8031`). Configure task execution in [`harness/config.json`](harness/config.json) (see the [Harness configuration guide](harness/README.md#configuration-file)), then run:
+**③ Your computer: start the web service.** In root [`config.json`](config.json), set `model.url` to the server's address, for example `http://10.194.99.8:8031`. Configure task execution in [`harness/config.json`](harness/config.json) (see the [Harness configuration guide](harness/README.md#configuration-file)), then run:
 
 ```bash
 bash start.sh web
 ```
 
-Complete Codex login if prompted. At startup the web service reads the model type and tokenizer from the model server, so your computer needs no checkpoint. Open [http://localhost:8032](http://localhost:8032), complete Settings and start a conversation. See the [Demo guide](demos/README.md) for configuration and service management.
+Before starting, it checks that the model server is reachable, ready and accepts the token. Complete Codex login if prompted. The web service reads the model type and tokenizer from the model server, so your computer needs no checkpoint. Open [http://localhost:8032](http://localhost:8032), complete Settings and start a conversation. See the [Demo guide](demos/README.md) for configuration and service management.
 
 ### 4. Android Demo (Beta)
 

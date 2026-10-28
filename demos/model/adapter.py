@@ -554,7 +554,6 @@ class RealtimeVenusOmniAdapter:
             self._needs_duplex = callable(getattr(self._model, "as_duplex", None))
 
     async def health(self) -> dict[str, Any]:
-        sess = self._session
         sp = self._system_prompt
         return {
             "model_revision": self._model_revision,
@@ -565,13 +564,6 @@ class RealtimeVenusOmniAdapter:
             },
             "uses_model_default_system_prompt": sp is None,
             "system_prompt_preview": (sp[:120] + "…") if sp else None,
-            "session": None
-            if sess is None
-            else {
-                "session_id": sess.session_id,
-                "incarnation": sess.incarnation,
-                "closed": sess.closed,
-            },
         }
 
     # -- driver -------------------------------------------------------------

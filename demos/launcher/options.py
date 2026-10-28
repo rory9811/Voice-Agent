@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 DEFAULT_CONFIG = {"model": "model_server.json", "web": "config.json"}
 DEFAULT_MODEL_URL = "http://127.0.0.1:8031"
-_MODEL_KEYS = {"type", "path", "reference_audio", "port", "memory_minutes", "startup_timeout"}
+_MODEL_KEYS = {"type", "path", "reference_audio", "host", "port", "memory_minutes", "startup_timeout"}
 _WEB_SECTIONS = {
     "model": {"url": "model_url", "length_penalty": "length_penalty", "timeout_s": "model_timeout_s"},
     "harness": {"config": "harness_config"},
@@ -63,6 +63,7 @@ def load_model_options(path: Path) -> dict:
         "type": lambda v: v in ("audio", "video", "omni"),
         "path": lambda v: isinstance(v, str),
         "reference_audio": lambda v: isinstance(v, str),
+        "host": lambda v: isinstance(v, str) and bool(v.strip()),
         "port": _port,
         "memory_minutes": lambda v: _positive(v, integer=True),
         "startup_timeout": _positive,
@@ -128,7 +129,8 @@ def _parser() -> argparse.ArgumentParser:
     model.add_argument("--model-path")
     model.add_argument("--ref-audio")
     model.add_argument("--memory-minutes", type=int)
-    web.add_argument("--model-url", help=f"Model server URL (default: {DEFAULT_MODEL_URL}, the SSH tunnel)")
+    model.add_argument("--host", help="Listen address (default: 127.0.0.1; use 0.0.0.0 or the server's VPN address for other computers)")
+    web.add_argument("--model-url", help=f"Model server URL, e.g. http://10.194.99.8:8031 (default: {DEFAULT_MODEL_URL})")
     web.add_argument("--harness-config", help="Override the referenced Harness JSON file")
     web.add_argument("--host")
     web.add_argument("--no-login", action="store_true",
@@ -169,7 +171,7 @@ def parse_launch_options(root: Path, argv=None):
             if attr in ("memory_minutes", "startup_timeout") and (not math.isfinite(value) or value <= 0):
                 parser.error(f"{key} must be positive and finite")
             if attr == "host" and not value.strip():
-                parser.error("web host must not be empty")
+                parser.error("host must not be empty")
             setattr(args, attr, value)
 
     # The background child runs from the project root. Freeze resolved arguments
@@ -183,11 +185,12 @@ def parse_launch_options(root: Path, argv=None):
             (f"{args.model_type.upper()}_MODEL_PATH", "MODEL_PATH"), "path", is_path=True)
         args.ref_audio = resolve(args.ref_audio, ("REF_AUDIO",), "reference_audio", is_path=True)
         numbers((
+            ("host", "VENUS_MODEL_HOST", "host", "127.0.0.1", str),
             ("port", "VENUS_MODEL_PORT", "port", 8031, int),
             ("memory_minutes", "VENUS_MEMORY_MINUTES", "memory_minutes", 40, int),
             ("startup_timeout", "VENUS_STARTUP_TIMEOUT", "startup_timeout", 600, float),
         ))
-        child = ["model", "--type", args.model_type, "--port", str(args.port),
+        child = ["model", "--type", args.model_type, "--host", args.host, "--port", str(args.port),
                  "--memory-minutes", str(args.memory_minutes),
                  "--startup-timeout", str(args.startup_timeout)]
         if args.model_path:

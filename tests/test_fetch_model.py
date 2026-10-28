@@ -6,7 +6,7 @@ from unittest.mock import patch
 import httpx
 
 from demos.model.client import RemoteOmniServingPort
-from demos.server.resources import fetch_model
+from demos.server.resources import check_model, fetch_model
 
 
 def mock_clients(handler, created):
@@ -23,7 +23,7 @@ class FetchModelTests(unittest.TestCase):
     def test_fetch_model_reads_type_and_files(self):
         def handler(request):
             if request.url.path == "/healthz":
-                return httpx.Response(200, json={"ready": True, "model_type": "audio"})
+                return httpx.Response(200, json={"ready": True, "model_type": "audio", "token_ok": True})
             if request.url.path == "/tokenizer":
                 return httpx.Response(
                     200, json={"files": {"tokenizer.json": "{}", "vocab.json": "{}"}}
@@ -45,7 +45,7 @@ class FetchModelTests(unittest.TestCase):
         self.assertEqual(seen["files"], ["tokenizer.json", "vocab.json"])
         self.assertTrue(created and all(kw.get("trust_env") is False for kw in created))
 
-    def test_fetch_model_unreachable_names_tunnel(self):
+    def test_fetch_model_unreachable_names_network(self):
         def refused(request):
             raise httpx.ConnectError("connection refused", request=request)
 
@@ -55,9 +55,46 @@ class FetchModelTests(unittest.TestCase):
         for handler in (refused, loading):
             with self.subTest(handler=handler.__name__), mock_clients(handler, []):
                 with self.assertRaises(RuntimeError) as caught:
-                    fetch_model("http://127.0.0.1:8031")
-                self.assertIn("ssh -N -L 8031:127.0.0.1:8031", str(caught.exception))
-                self.assertIn("bash start.sh model", str(caught.exception))
+                    fetch_model("http://10.194.99.8:8031")
+                message = str(caught.exception)
+                self.assertIn("VPN", message)
+                self.assertIn("bash start.sh model", message)
+                self.assertNotIn("ssh", message)
+
+    def test_fetch_model_sends_token(self):
+        seen = []
+
+        def handler(request):
+            seen.append((request.url.path, request.headers.get("authorization")))
+            if request.url.path == "/healthz":
+                return httpx.Response(200, json={"ready": True, "model_type": "omni", "token_ok": True})
+            return httpx.Response(200, json={"files": {"tokenizer.json": "{}"}})
+
+        with mock_clients(handler, []), patch(
+            "transformers.Qwen2TokenizerFast.from_pretrained", return_value="tokenizer"
+        ):
+            fetch_model("http://10.194.99.8:8031", token="secret")
+        self.assertEqual(seen, [("/healthz", "Bearer secret"), ("/tokenizer", "Bearer secret")])
+
+    def test_rejected_token_is_named(self):
+        def handler(request):
+            return httpx.Response(200, json={"ready": True, "model_type": "omni", "token_ok": False})
+
+        with mock_clients(handler, []), self.assertRaises(RuntimeError) as caught:
+            check_model("http://10.194.99.8:8031", token="wrong")
+        self.assertIn("VENUS_MODEL_TOKEN", str(caught.exception))
+
+    def test_outdated_server_is_named(self):
+        def handler(request):
+            return httpx.Response(200, json={"ready": True, "model_type": "omni"})
+
+        with mock_clients(handler, []), self.assertRaises(RuntimeError) as caught:
+            check_model("http://10.194.99.8:8031", token="secret")
+        self.assertIn("older version", str(caught.exception))
+
+    def test_model_client_sends_token(self):
+        port = RemoteOmniServingPort("http://10.194.99.8:8031", token="secret")
+        self.assertEqual(port._client.headers["authorization"], "Bearer secret")
 
     def test_model_client_ignores_proxy_env(self):
         with patch.dict(os.environ, {"ALL_PROXY": "socks5://127.0.0.1:1"}):

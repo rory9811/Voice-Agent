@@ -21,7 +21,7 @@
 | Harness + Codex | 嵌入网页服务，执行任务、跟踪进度并回传结果。 | [`server/resources.py`](server/resources.py)、[Harness](../harness/README_ZH.md#架构) |
 | 启动与配置 | 环境安装、进程管理、配置持久化。 | [`launcher/`](launcher/)、[`install.py`](install.py)、[`settings.py`](settings.py) |
 
-模型服务跑在 GPU 服务器上，其余组件都跑在你的电脑上，经 SSH 隧道访问模型。
+模型服务跑在 GPU 服务器上，其余组件都跑在你的电脑上，通过网络（例如公司 VPN）调用模型的 HTTP 接口。
 
 <p align="center"><img src="../assets/experience-zh.png" width="100%" alt="Realtime-Venus 网页体验界面" /><br /><sub>浏览器统一承载实时媒体、任务进度和结果下载。</sub></p>
 
@@ -56,29 +56,29 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 
 在仓库根目录、在各自的机器上各运行一次安装器。
 
-1. **GPU 服务器：** `bash install.sh model`，编辑 [`model_server.json`](../model_server.json)（见下方[配置文件](#配置文件)），然后启动模型：
+1. **两台机器：** 设置同一个令牌（用 `python3 -c "import secrets; print(secrets.token_urlsafe(24))"` 生成一次）：
+
+   ```bash
+   export VENUS_MODEL_TOKEN=<生成的令牌>
+   ```
+
+2. **GPU 服务器：** `bash install.sh model`，编辑 [`model_server.json`](../model_server.json)（见下方[配置文件](#配置文件)），把 `host` 设为 `0.0.0.0` 或服务器的 VPN 地址，然后启动模型：
 
    ```bash
    bash start.sh model --detach
    ```
 
-   模型 API 只监听服务器的 `127.0.0.1:8031`。
+   没有设置 `VENUS_MODEL_TOKEN` 时，模型拒绝监听网络地址。你的电脑必须能访问它的端口（默认 8031）。
 
-2. **你的电脑：** 保持以下隧道运行，将 `user@server` 换成你的 SSH 登录地址：
-
-   ```bash
-   ssh -N -L 8031:127.0.0.1:8031 user@server
-   ```
-
-3. **你的电脑：** `bash install.sh web`，在根目录 [`config.json`](../config.json) 中把 `harness.config` 指向已配置好的 Harness 文件（见 [Harness README](../harness/README_ZH.md#配置文件)），然后启动网页服务：
+3. **你的电脑：** `bash install.sh web`，在根目录 [`config.json`](../config.json) 中把 `model.url` 设为服务器地址（例如 `http://10.194.99.8:8031`），并把 `harness.config` 指向已配置好的 Harness 文件（见 [Harness README](../harness/README_ZH.md#配置文件)），然后启动网页服务：
 
    ```bash
    bash start.sh web
    ```
 
-   如果连不上模型服务，会直接报错并打印需要运行的隧道命令。
+   如果连不上模型服务、模型未就绪或令牌不对，会直接报错退出。
 
-同机部署时在同一台机器上运行这两个角色即可，`model.url` 保持 `http://127.0.0.1:8031`，不需要隧道。
+同机部署时在同一台机器上用默认值运行这两个角色即可（`host` 为 `127.0.0.1`，`model.url` 为 `http://127.0.0.1:8031`），不需要令牌。
 
 ## 在本地电脑打开
 
@@ -94,7 +94,7 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 
 模型同一时间支持**一个活跃会话**。如果网页服务没来得及关闭会话就退出（崩溃、断网），模型在 15 秒内收不到请求后会释放这个名额。网页服务监听本机回环地址，浏览器信任它使用摄像头／麦克风；改成其他 `web.host` 时需要 HTTPS。
 
-**延迟。** 对话中每秒约有 3 次依次进行的模型请求，外加 1 次输出拉取，全部经过隧道。往返延迟约 100 ms 以内时体验接近同机部署；超过约 200 ms 时回复会变慢，输入可能积压。可在本地用 `curl -s -o /dev/null -w '%{time_total}\n' 127.0.0.1:8031/healthz` 测量。
+**延迟。** 对话中每秒约有 3 次依次进行的模型请求，外加 1 次输出拉取，全部经过网络。往返延迟约 100 ms 以内时体验接近同机部署；超过约 200 ms 时回复会变慢，输入可能积压。可在本地用 `curl -s -o /dev/null -w '%{time_total}\n' http://10.194.99.8:8031/healthz` 测量（地址换成你的 `model.url`）。
 
 ## 配置
 
@@ -107,6 +107,7 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
   "type": "video",
   "path": "Realtime-Venus-Omni",
   "reference_audio": "",
+  "host": "127.0.0.1",
   "port": 8031,
   "memory_minutes": 40,
   "startup_timeout": 600
@@ -118,7 +119,8 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 | `type` | `omni` | `video`（也接受 `omni`）提供摄像头与麦克风、上传视频；`audio` 提供麦克风、上传音频。 |
 | `path` | — | 对应的完整权重目录，或包含两种权重子目录的 Hugging Face 下载目录。两种模式使用独立权重。 |
 | `reference_audio` | 权重自带音色 | 参考音色文件；留空使用权重的 `assets/HT_ref_audio.wav`。 |
-| `port` | `8031` | 模型 API 在服务器回环地址上的端口。 |
+| `host` | `127.0.0.1` | 监听地址。要让你的电脑访问，设为 `0.0.0.0` 或服务器的 VPN 地址；此时必须设置 `VENUS_MODEL_TOKEN`。 |
+| `port` | `8031` | 模型 API 端口。 |
 | `memory_minutes` | `40` | Omni 视频记忆时长（分钟）；Audio 不使用。 |
 | `startup_timeout` | `600` | 等待模型加载的秒数。 |
 
@@ -144,7 +146,7 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 
 | 字段 | 默认值 | 作用 |
 | --- | --- | --- |
-| `model.url` | `http://127.0.0.1:8031` | 模型服务地址，即 SSH 隧道的本地端。启动时从这里读取模型类型和 tokenizer。 |
+| `model.url` | `http://127.0.0.1:8031` | 模型服务地址，例如 `http://10.194.99.8:8031`。启动时从这里读取模型类型和 tokenizer。 |
 | `model.length_penalty` | `0.8` | 发言长度参数，范围 0.1–5；越小越倾向于提前结束发言。每次新会话时发给模型。 |
 | `model.timeout_s` | `180` | 模型请求超时（秒）。 |
 | `harness.config` | —（必填） | 你的 Harness 配置；按其 README 填写任务目录、组件模型和等待时长。 |
@@ -157,7 +159,7 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 
 所有配置文件中的相对路径均以各自文件所在目录为准；`--config` 及命令行／环境变量路径以执行命令时的目录为准。配置文件不含权重。
 
-优先级为 **命令行 → 环境变量 → 配置文件 → 默认值**。模型角色：`--type`、`--model-path`、`--ref-audio`、`--port`、`--memory-minutes`；环境变量 `VENUS_MODEL_TYPE`、`MODEL_PATH`、`AUDIO_MODEL_PATH` / `OMNI_MODEL_PATH`、`REF_AUDIO`、`VENUS_MODEL_PORT`、`VENUS_MEMORY_MINUTES`。网页角色：`--model-url`、`--harness-config`、`--host`、`--port`；环境变量 `VENUS_MODEL_URL`、`HARNESS_CONFIG`、`VENUS_WEB_HOST`、`VENUS_WEB_PORT`。两者都支持 `--startup-timeout` / `VENUS_STARTUP_TIMEOUT`。
+优先级为 **命令行 → 环境变量 → 配置文件 → 默认值**。模型角色：`--type`、`--model-path`、`--ref-audio`、`--port`、`--memory-minutes`；环境变量 `VENUS_MODEL_TYPE`、`MODEL_PATH`、`AUDIO_MODEL_PATH` / `OMNI_MODEL_PATH`、`REF_AUDIO`、`VENUS_MODEL_PORT`、`VENUS_MEMORY_MINUTES`。网页角色：`--model-url`、`--harness-config`、`--host`、`--port`；环境变量 `VENUS_MODEL_URL`、`HARNESS_CONFIG`、`VENUS_WEB_HOST`、`VENUS_WEB_PORT`。两者都支持 `--startup-timeout` / `VENUS_STARTUP_TIMEOUT`；共享令牌只从环境变量 `VENUS_MODEL_TOKEN` 读取。模型角色还支持 `--host` / `VENUS_MODEL_HOST`。
 
 不传 `--config` 时，模型角色读取仓库根目录 `model_server.json`，网页角色读取根目录 `config.json`（存在时）。网页角色必须通过 `harness.config` 引用一个已存在的文件。错别字、非法数值或缺失资产会明确报错；`--stop` / `--status` 不依赖配置文件可读。切换模型或服务端口后需要重启。
 

@@ -76,6 +76,7 @@ class RemoteOmniServingPort:
         *,
         timeout_s: float = 60.0,
         length_penalty: float | None = None,
+        token: str | None = None,
     ) -> None:
         if length_penalty is not None:
             from .settings import DuplexSettings
@@ -84,7 +85,10 @@ class RemoteOmniServingPort:
         self._length_penalty = length_penalty
         self._base_url = base_url.rstrip("/")
         self._client = httpx.AsyncClient(
-            base_url=self._base_url, timeout=timeout_s, trust_env=False
+            base_url=self._base_url,
+            timeout=timeout_s,
+            trust_env=False,
+            headers={"Authorization": f"Bearer {token}"} if token else {},
         )
 
     async def aclose(self) -> None:

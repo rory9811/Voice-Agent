@@ -150,29 +150,35 @@ python frontend/Realtime-Venus-Audio/audio_duplex_chat.py \
 
 ### 3. 与 Realtime-Venus 实时对话
 
-模型跑在 GPU 服务器上（**至少一张 NVIDIA A100**），网页服务、Harness 与 Codex 跑在本地电脑上，两者通过 SSH 隧道连接。
+模型跑在 GPU 服务器上（**至少一张 NVIDIA A100**），网页服务、Harness 与 Codex 跑在本地电脑上；本地直接通过网络（例如公司 VPN）调用模型的 HTTP 接口。
 
-**① 服务器：启动模型。** 编辑 [`model_server.json`](model_server.json)：`type` 选 `audio`（麦克风、音频上传）或 `video`（也接受 `omni`；摄像头加麦克风、视频上传），`path` 指向对应的完整权重。然后运行：
+**① 两台机器：设置同一个令牌。** 模型接口用一个共享密钥保护。先生成一次：
+
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(24))"
+```
+
+在服务器和你的电脑上，启动前都设置它（写进 `~/.bashrc` 或 `~/.zshrc` 可以长期生效）：
+
+```bash
+export VENUS_MODEL_TOKEN=<生成的令牌>
+```
+
+**② 服务器：启动模型。** 编辑 [`model_server.json`](model_server.json)：`type` 选 `audio`（麦克风、音频上传）或 `video`（也接受 `omni`；摄像头加麦克风、视频上传），`path` 指向对应的完整权重，`host` 设为 `0.0.0.0`（或服务器的 VPN 地址），让你的电脑能访问到。然后运行：
 
 ```bash
 bash start.sh model --detach
 ```
 
-模型 API 只监听服务器的 `127.0.0.1:8031`，不对外暴露。
+没有设置 `VENUS_MODEL_TOKEN` 时，模型拒绝监听网络地址。请确认你的电脑能访问它的端口（默认 8031）；如果 VPN 只放行部分端口，请询问网络管理员。
 
-**② 本地：建立隧道。** 保持以下命令运行，将 `user@server` 替换为自己的 SSH 登录地址：
-
-```bash
-ssh -N -L 8031:127.0.0.1:8031 user@server
-```
-
-**③ 本地：启动网页。** 根目录 [`config.json`](config.json) 的 `model.url` 默认就是隧道地址 `http://127.0.0.1:8031`。在 [`harness/config.json`](harness/config.json) 配置任务执行（见 [Harness 配置说明](harness/README_ZH.md#配置文件)），然后运行：
+**③ 本地：启动网页。** 在根目录 [`config.json`](config.json) 中把 `model.url` 设为服务器地址，例如 `http://10.194.99.8:8031`。在 [`harness/config.json`](harness/config.json) 配置任务执行（见 [Harness 配置说明](harness/README_ZH.md#配置文件)），然后运行：
 
 ```bash
 bash start.sh web
 ```
 
-若提示则完成 Codex 登录。网页服务启动时从模型服务读取模型类型和 tokenizer，本地不需要权重。打开 [http://localhost:8032](http://localhost:8032)，完成 Settings 后开始对话。配置与服务管理详见 [Demo 文档](demos/README_ZH.md)。
+启动前会检查模型服务是否可达、是否就绪、令牌是否正确。若提示则完成 Codex 登录。网页服务从模型服务读取模型类型和 tokenizer，本地不需要权重。打开 [http://localhost:8032](http://localhost:8032)，完成 Settings 后开始对话。配置与服务管理详见 [Demo 文档](demos/README_ZH.md)。
 
 ### 4. Android 演示应用（Beta）
 

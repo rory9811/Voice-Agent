@@ -1,4 +1,6 @@
 import asyncio
+import io
+from contextlib import redirect_stderr
 import json
 import tempfile
 import unittest
@@ -12,7 +14,7 @@ import numpy as np
 from fastapi.testclient import TestClient
 from demos.launcher.config import checkpoint_directory
 from demos.launcher.variants import select_checkpoint
-from demos.launcher.cli import _run
+from demos.launcher.cli import _run, main
 from demos.model.adapter import _load_real_blocking
 from demos.server.app import create_app
 from demos.server.media import audio_buckets
@@ -57,6 +59,30 @@ class ModelModeTests(unittest.TestCase):
                     self.assertEqual(command[command.index('--model-type')+1],mode)
                     self.assertEqual(command[command.index('--host')+1],'127.0.0.1')
                     self.assertEqual(health,'http://127.0.0.1:8031/healthz')
+
+    def run_model_role(self, host, token):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);path=checkpoint(root/'weights','realtime_venus_omni')
+            (root/'model_server.json').write_text(json.dumps({'type':'omni','path':'weights','host':host}))
+            with patch.dict('os.environ',{'VENUS_ROOT':tmp,'VENUS_MODEL_TOKEN':token}), patch('demos.launcher.cli.subprocess.run') as run, patch('demos.launcher.cli.ensure_port_available') as ports, patch('demos.launcher.cli.StackSupervisor') as supervisor:
+                main(['model'])
+            return run,ports,supervisor
+
+    def test_model_role_serves_network_host(self):
+        for host,health in [('0.0.0.0','http://127.0.0.1:8031/healthz'),('10.194.99.8','http://10.194.99.8:8031/healthz')]:
+            with self.subTest(host=host):
+                _,ports,supervisor=self.run_model_role(host,'secret')
+                _,_,command,probe,_,_=supervisor.call_args.args
+                self.assertEqual(command[command.index('--host')+1],host)
+                self.assertEqual(probe,health)
+                self.assertEqual(ports.call_args.args,(host,8031))
+
+    def test_model_role_refuses_network_host_without_token(self):
+        err=io.StringIO()
+        with redirect_stderr(err),self.assertRaises(SystemExit) as caught:
+            self.run_model_role('0.0.0.0','')
+        self.assertEqual(caught.exception.code,1)
+        self.assertIn('VENUS_MODEL_TOKEN',err.getvalue())
 
     def test_audio_loader_disables_vision_without_video_memory(self):
         for mode in ['audio','omni']:

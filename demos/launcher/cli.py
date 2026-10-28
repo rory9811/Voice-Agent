@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import fcntl
-import getpass
 import json
 import os
 import shutil
@@ -13,10 +12,11 @@ import sys
 import time
 from pathlib import Path
 
-from .config import checked_file, ensure_port_available
-from .supervisor import StackSupervisor, healthy, read_state
+from .config import checked_file, ensure_port_available, local_url
+from .supervisor import StackSupervisor, read_state
 from .variants import select_checkpoint
 from .options import parse_launch_options
+from demos.model.settings import model_token, require_token
 from demos.variants import model_name
 
 
@@ -74,7 +74,8 @@ def setup_backend(harness_path: Path, demo_path: Path | None, runtime: Path, all
 def prepare_model(root: Path, args):
     model = select_checkpoint(root, args.model_type, explicit=args.model_path)
     ref = checked_file(Path(args.ref_audio) if args.ref_audio else model / "assets/HT_ref_audio.wav")
-    ensure_port_available("127.0.0.1", args.port)
+    require_token(args.host, model_token())
+    ensure_port_available(args.host, args.port)
     python = os.getenv("VENUS_MODEL_PYTHON", sys.executable)
     subprocess.run(
         [
@@ -91,34 +92,34 @@ def prepare_model(root: Path, args):
         "--model-path", str(model),
         "--ref-audio", str(ref),
         "--memory-minutes", str(args.memory_minutes),
-        # Never exposed beyond this host: the local computer reaches it through SSH.
-        "--host", "127.0.0.1",
+        "--host", args.host,
         "--port", str(args.port),
     ]
 
     def show():
-        ssh = os.getenv("SSH_CONNECTION", "").split()
-        server = ssh[2] if len(ssh) == 4 else "<server>"
-        print(f"\n{model_name(args.model_type)} API: http://127.0.0.1:{args.port} (this server only)", flush=True)
-        print("On your local computer, keep this SSH tunnel open, then run: bash start.sh web", flush=True)
-        print(f"  ssh -N -L {args.port}:127.0.0.1:{args.port} {getpass.getuser()}@{server}", flush=True)
+        print(f"\n{model_name(args.model_type)} API listening on {args.host}:{args.port}", flush=True)
+        if args.host in ("127.0.0.1", "localhost"):
+            print("Only this server can reach it. To serve your computer, set host in model_server.json "
+                  "(0.0.0.0 or this server's VPN address) and VENUS_MODEL_TOKEN.", flush=True)
+        else:
+            address = "<this server's VPN address>" if args.host == "0.0.0.0" else args.host
+            print(f"On your computer, set model.url in config.json to http://{address}:{args.port}, set "
+                  "VENUS_MODEL_TOKEN to the same secret, then run: bash start.sh web", flush=True)
         print("Logs: runtime/logs/model.log; stop: bash start.sh model --stop", flush=True)
 
     state = {"model_type": args.model_type, "model_path": str(model), "port": args.port}
     print(f"Loading {model_name(args.model_type)}...", flush=True)
-    return command, f"http://127.0.0.1:{args.port}/healthz", state, show
+    return command, local_url(args.host, args.port, "/healthz"), state, show
 
 
 def prepare_web(root: Path, args):
-    from demos.server.resources import unreachable_message
+    from demos.server import resources
 
     runtime = root / "runtime"
-    ensure_port_available("127.0.0.1", args.port)
-    if args.host != "127.0.0.1":
-        ensure_port_available(args.host, args.port)
+    ensure_port_available(args.host, args.port)
     setup_backend(Path(args.harness_config), args.demo_config, runtime, allow_login=not args.no_login)
-    if not healthy(f"{args.model_url.rstrip('/')}/healthz"):
-        raise RuntimeError(unreachable_message(args.model_url))
+    # Reachability, readiness and the shared token, before the web service starts.
+    resources.check_model(args.model_url, model_token())
     command = [
         sys.executable, "-m", "demos.server.cli",
         "--model-server", args.model_url,
@@ -135,7 +136,7 @@ def prepare_web(root: Path, args):
         print("Logs: runtime/logs/web.log; stop: bash start.sh web --stop", flush=True)
 
     state = {"model_url": args.model_url, "port": args.port}
-    return command, f"http://127.0.0.1:{args.port}/health", state, show
+    return command, local_url(args.host, args.port, "/health"), state, show
 
 
 def _run(argv=None):

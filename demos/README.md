@@ -21,7 +21,7 @@ The selected frontend handles streaming media and speech in the **interaction lo
 | Harness + Codex | Embedded task execution, progress, and result delivery. | [`server/resources.py`](server/resources.py), [Harness](../harness/README.md#architecture) |
 | Launcher and settings | Installation, process management, and saved configuration. | [`launcher/`](launcher/), [`install.py`](install.py), [`settings.py`](settings.py) |
 
-The model service runs on a GPU server; every other component runs on your computer and reaches the model through an SSH tunnel.
+The model service runs on a GPU server; every other component runs on your computer and calls the model's HTTP API over the network (for example a company VPN).
 
 <p align="center"><img src="../assets/experience-en.png" width="100%" alt="Realtime-Venus browser demo" /><br /><sub>The browser is the entry point for live media, task progress, and result downloads.</sub></p>
 
@@ -56,29 +56,29 @@ A nested `model_weight/model_weight/` layout is also recognized.
 
 Run each installer once from the repository root, on its machine.
 
-1. **GPU server:** `bash install.sh model`, edit [`model_server.json`](../model_server.json) (see [Configuration files](#configuration-files)), then start the model:
+1. **Both machines:** set the same token, generated once with `python3 -c "import secrets; print(secrets.token_urlsafe(24))"`:
+
+   ```bash
+   export VENUS_MODEL_TOKEN=<the generated token>
+   ```
+
+2. **GPU server:** `bash install.sh model`, edit [`model_server.json`](../model_server.json) (see [Configuration files](#configuration-files)) and set `host` to `0.0.0.0` or the server's VPN address, then start the model:
 
    ```bash
    bash start.sh model --detach
    ```
 
-   The model API listens only on the server's `127.0.0.1:8031`.
+   Without `VENUS_MODEL_TOKEN` the model refuses to listen on a network address. Its port (8031 by default) must be reachable from your computer.
 
-2. **Your computer:** keep this tunnel open, substituting your SSH login:
-
-   ```bash
-   ssh -N -L 8031:127.0.0.1:8031 user@server
-   ```
-
-3. **Your computer:** `bash install.sh web`, point `harness.config` in root [`config.json`](../config.json) to your configured Harness file (see the [Harness README](../harness/README.md#configuration-file)), then start the web service:
+3. **Your computer:** `bash install.sh web`, set `model.url` in root [`config.json`](../config.json) to the server's address (for example `http://10.194.99.8:8031`) and point `harness.config` to your configured Harness file (see the [Harness README](../harness/README.md#configuration-file)), then start the web service:
 
    ```bash
    bash start.sh web
    ```
 
-   It fails fast, printing the tunnel command, if the model server is unreachable.
+   It fails fast if the model server is unreachable, not ready, or rejects the token.
 
-To run everything on one machine, run both roles there; `model.url` stays `http://127.0.0.1:8031` and no tunnel is needed.
+To run everything on one machine, run both roles there with the defaults (`host` `127.0.0.1`, `model.url` `http://127.0.0.1:8031`); no token is needed.
 
 ## Open on your computer
 
@@ -95,7 +95,7 @@ The side panel provides task progress, cancellation, and artifact downloads.
 
 The model serves **one active conversation**. If the web service stops without closing it (crash, network loss), the model frees the slot after 15 seconds without requests. The web service listens on loopback, which browsers trust for camera/microphone; another `web.host` requires HTTPS for those permissions.
 
-**Latency.** Each second of conversation makes about three sequential requests to the model plus one output pull, all through the tunnel. Round trips up to about 100 ms feel like a single-machine setup; above about 200 ms replies slow down and input can back up. Check with `curl -s -o /dev/null -w '%{time_total}\n' 127.0.0.1:8031/healthz` on your computer.
+**Latency.** Each second of conversation makes about three sequential requests to the model plus one output pull, all over the network. Round trips up to about 100 ms feel like a single-machine setup; above about 200 ms replies slow down and input can back up. Check from your computer with `curl -s -o /dev/null -w '%{time_total}\n' http://10.194.99.8:8031/healthz`, using your `model.url`.
 
 ## Configuration
 
@@ -108,6 +108,7 @@ The model serves **one active conversation**. If the web service stops without c
   "type": "video",
   "path": "Realtime-Venus-Omni",
   "reference_audio": "",
+  "host": "127.0.0.1",
   "port": 8031,
   "memory_minutes": 40,
   "startup_timeout": 600
@@ -119,7 +120,8 @@ The model serves **one active conversation**. If the web service stops without c
 | `type` | `omni` | `video` (also `omni`): camera with microphone and video upload; `audio`: microphone and audio upload. |
 | `path` | — | Complete checkpoint directory, or the downloaded Hugging Face root containing both variants. The modes load separate checkpoints. |
 | `reference_audio` | checkpoint voice | Reference voice file; empty selects the checkpoint's `assets/HT_ref_audio.wav`. |
-| `port` | `8031` | Model API port on the server's loopback. |
+| `host` | `127.0.0.1` | Listen address. Use `0.0.0.0` or the server's VPN address to serve your computer; requires `VENUS_MODEL_TOKEN`. |
+| `port` | `8031` | Model API port. |
 | `memory_minutes` | `40` | Omni video memory in minutes; unused by Audio. |
 | `startup_timeout` | `600` | Seconds to wait for the model to load. |
 
@@ -145,7 +147,7 @@ The model serves **one active conversation**. If the web service stops without c
 
 | Field | Default | Purpose |
 | --- | --- | --- |
-| `model.url` | `http://127.0.0.1:8031` | Model server address — the local end of the SSH tunnel. The model type and tokenizer are read from it at startup. |
+| `model.url` | `http://127.0.0.1:8031` | Model server address, for example `http://10.194.99.8:8031`. The model type and tokenizer are read from it at startup. |
 | `model.length_penalty` | `0.8` | Speaking length, range 0.1–5; lower values encourage earlier turn endings. Sent to the model with each new session. |
 | `model.timeout_s` | `180` | Model request timeout in seconds. |
 | `harness.config` | — (required) | Your Harness configuration; set workspace, component models and timeouts per its README. |
@@ -158,7 +160,7 @@ To switch modes, stop the model on the server (`bash start.sh model --stop`), ed
 
 Relative paths inside each JSON resolve from that file’s own directory; CLI/environment paths and `--config` resolve from the caller’s directory. Config files contain no weights.
 
-Precedence: **CLI → environment → config → defaults**. Model role: `--type`, `--model-path`, `--ref-audio`, `--port`, `--memory-minutes`; environment `VENUS_MODEL_TYPE`, `MODEL_PATH`, `AUDIO_MODEL_PATH` / `OMNI_MODEL_PATH`, `REF_AUDIO`, `VENUS_MODEL_PORT`, `VENUS_MEMORY_MINUTES`. Web role: `--model-url`, `--harness-config`, `--host`, `--port`; environment `VENUS_MODEL_URL`, `HARNESS_CONFIG`, `VENUS_WEB_HOST`, `VENUS_WEB_PORT`. Both: `--startup-timeout` / `VENUS_STARTUP_TIMEOUT`.
+Precedence: **CLI → environment → config → defaults**. Model role: `--type`, `--model-path`, `--ref-audio`, `--port`, `--memory-minutes`; environment `VENUS_MODEL_TYPE`, `MODEL_PATH`, `AUDIO_MODEL_PATH` / `OMNI_MODEL_PATH`, `REF_AUDIO`, `VENUS_MODEL_PORT`, `VENUS_MEMORY_MINUTES`. Web role: `--model-url`, `--harness-config`, `--host`, `--port`; environment `VENUS_MODEL_URL`, `HARNESS_CONFIG`, `VENUS_WEB_HOST`, `VENUS_WEB_PORT`. Both: `--startup-timeout` / `VENUS_STARTUP_TIMEOUT`; the shared token is read only from `VENUS_MODEL_TOKEN`. Model role also accepts `--host` / `VENUS_MODEL_HOST`.
 
 Without `--config`, the model role reads root `model_server.json` and the web role reads root `config.json`, if present. The web role requires `harness.config` to reference an existing file. Unknown fields, invalid values and missing assets fail clearly. `--stop` / `--status` do not depend on readable configuration. Restart after changing the model or service ports.
 

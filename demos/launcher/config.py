@@ -61,6 +61,11 @@ def checkpoint_directory(path: Path, model_type: str | None = None) -> Path:
     return path
 
 
+def local_url(host: str, port: int, path: str) -> str:
+    """URL this machine uses to reach its own service listening on host:port."""
+    return f"http://{'127.0.0.1' if host == '0.0.0.0' else host}:{port}{path}"
+
+
 def ensure_port_available(host: str, port: int) -> None:
     if not 0 < port < 65536:
         raise ValueError(f"Invalid port: {port}")

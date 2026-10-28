@@ -150,19 +150,20 @@ class DeploymentConfigTests(unittest.TestCase):
                     _run([role, '--status'])
                 self.assertIs(json.loads(out.getvalue())['alive'], alive, role)
 
-    def launch_web(self, healthy=True):
+    def launch_web(self, *extra, model_error=None):
         path = self.web_document()
         supervisor, ports = MagicMock(), MagicMock()
-        with patch.dict(os.environ, {'VENUS_ROOT': str(self.root)}), \
+        check = MagicMock(side_effect=model_error)
+        with patch.dict(os.environ, {'VENUS_ROOT': str(self.root), 'VENUS_MODEL_TOKEN': 'secret'}), \
                 patch('demos.launcher.cli.setup_backend'), \
                 patch('demos.launcher.cli.ensure_port_available', ports), \
-                patch('demos.launcher.cli.healthy', return_value=healthy), \
+                patch('demos.server.resources.check_model', check), \
                 patch('demos.launcher.cli.StackSupervisor', supervisor):
-            main(['web', '--config', str(path)])
-        return path, supervisor, ports
+            main(['web', '--config', str(path), *extra])
+        return path, supervisor, ports, check
 
     def test_web_role_command(self):
-        path, supervisor, _ = self.launch_web()
+        path, supervisor, _, check = self.launch_web()
         runtime, name, command, health, _, _ = supervisor.call_args.args
         self.assertEqual(name, 'web')
         self.assertIn('demos.server.cli', command)
@@ -172,18 +173,38 @@ class DeploymentConfigTests(unittest.TestCase):
         self.assertNotIn('--tokenizer-path', command)
         self.assertNotIn('--model-type', command)
         self.assertEqual(health, 'http://127.0.0.1:9032/health')
+        self.assertEqual(check.call_args.args, ('http://127.0.0.1:9031', 'secret'))
 
     def test_web_role_fails_fast_without_model(self):
         err = io.StringIO()
         with redirect_stderr(err), self.assertRaises(SystemExit) as caught:
-            _, supervisor, _ = self.launch_web(healthy=False)
+            self.launch_web(model_error=RuntimeError('model server unreachable over the VPN'))
         self.assertEqual(caught.exception.code, 1)
-        self.assertIn('ssh -N -L 9031:127.0.0.1:9031', err.getvalue())
+        self.assertIn('model server unreachable over the VPN', err.getvalue())
 
     def test_web_role_does_not_bind_model_port(self):
-        _, _, ports = self.launch_web()
+        _, _, ports, _ = self.launch_web()
         self.assertTrue(ports.call_args_list)
         self.assertEqual({call.args[1] for call in ports.call_args_list}, {9032})
+
+    def test_web_health_follows_listen_host(self):
+        _, supervisor, ports, _ = self.launch_web('--host', '10.1.2.3')
+        self.assertEqual(supervisor.call_args.args[3], 'http://10.1.2.3:9032/health')
+        self.assertEqual(ports.call_args.args, ('10.1.2.3', 9032))
+
+    def test_model_host_option(self):
+        path = self.write('server/model_server.json', {'type': 'audio', 'host': '0.0.0.0'})
+        _, args, child = parse_launch_options(self.root, ['model', '--config', str(path)])
+        self.assertEqual(args.host, '0.0.0.0')
+        self.assertEqual(child[child.index('--host')+1], '0.0.0.0')
+        with patch.dict(os.environ, {'VENUS_MODEL_HOST': '10.194.99.8'}):
+            _, args, _ = parse_launch_options(self.root, ['model', '--config', str(path)])
+        self.assertEqual(args.host, '10.194.99.8')
+        _, args, _ = parse_launch_options(self.root, ['model'])
+        self.assertEqual(args.host, '127.0.0.1')
+        for bad in ['', 5]:
+            with self.subTest(host=bad), self.assertRaises(ValueError):
+                load_model_options(self.write('bad.json', {'host': bad}))
 
     def test_shell_preserves_callers_directory(self):
         root = next(p for p in Path(__file__).resolve().parents if (p/"start.sh").exists())

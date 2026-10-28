@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import secrets
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,7 @@ from demos.model.adapter import (
     RealtimeVenusOmniAdapter,
 )
 from demos.model.prompts import REALTIME_VENUS_SYSTEM_PROMPT
+from demos.model.settings import TOKEN_ENV, model_token, require_token
 from demos.variants import model_name
 
 _LOG = logging.getLogger("demos.model.server")
@@ -49,6 +51,7 @@ class _ServerConfig:
     host: str = "127.0.0.1"
     port: int = 8000
     log_level: str = "info"
+    token: str | None = None
 
 
 async def _build_adapter(config: _ServerConfig) -> RealtimeVenusOmniAdapter:
@@ -99,6 +102,22 @@ def create_app(config: _ServerConfig) -> FastAPI:
         lifespan=lifespan,
     )
 
+    def token_ok(request: Request) -> bool:
+        if config.token is None:
+            return True
+        supplied = request.headers.get("authorization", "").encode()
+        return secrets.compare_digest(supplied, f"Bearer {config.token}".encode())
+
+    @app.middleware("http")
+    async def require_bearer(request: Request, call_next):
+        # /healthz stays public for liveness probes; it reveals no session.
+        if request.url.path != "/healthz" and not token_ok(request):
+            return JSONResponse(
+                status_code=401,
+                content={"error": f"missing or wrong {TOKEN_ENV}", "type": "Unauthorized"},
+            )
+        return await call_next(request)
+
     def adapter() -> RealtimeVenusOmniAdapter:
         a = state["adapter"]
         if a is None:
@@ -115,7 +134,7 @@ def create_app(config: _ServerConfig) -> FastAPI:
         )
 
     @app.get("/healthz")
-    async def health():
+    async def health(request: Request):
         if not state["ready"]:
             return JSONResponse(status_code=503, content={"ready": False})
         a = adapter()
@@ -124,6 +143,7 @@ def create_app(config: _ServerConfig) -> FastAPI:
             "ready": True,
             "model_type": config.model_type,
             "model": config.model_name,
+            "token_ok": token_ok(request),
             **h,
         }
 
@@ -251,6 +271,11 @@ def _parse_args(argv: list[str] | None = None) -> _ServerConfig:
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--log-level", default="info")
     a = p.parse_args(argv)
+    token = model_token()
+    try:
+        require_token(a.host, token)
+    except ValueError as exc:
+        p.error(str(exc))
     if a.system_prompt_model_default:
         system_prompt = None
     elif a.system_prompt_file:
@@ -272,6 +297,7 @@ def _parse_args(argv: list[str] | None = None) -> _ServerConfig:
         host=a.host,
         port=a.port,
         log_level=a.log_level,
+        token=token,
     )
 
 
