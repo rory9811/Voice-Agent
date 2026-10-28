@@ -75,7 +75,9 @@ class RemoteOmniServingPort:
             DuplexSettings(length_penalty=length_penalty)
         self._length_penalty = length_penalty
         self._base_url = base_url.rstrip("/")
-        self._client = httpx.AsyncClient(base_url=self._base_url, timeout=timeout_s)
+        self._client = httpx.AsyncClient(
+            base_url=self._base_url, timeout=timeout_s, trust_env=False
+        )
 
     async def aclose(self) -> None:
         await self._client.aclose()

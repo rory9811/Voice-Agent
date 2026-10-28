@@ -1,10 +1,12 @@
 """Compose the model connection and asynchronous Harness for a browser session."""
 
-import asyncio
+import tempfile
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
+
+import httpx
 
 from demos.model.client import RemoteOmniServingPort
 from demos.settings import load_setup
@@ -28,21 +30,44 @@ class WebResources:
             await self.serving.aclose()
 
 
-@lru_cache(maxsize=2)
-def load_tokenizer(path):
-    from transformers import AutoTokenizer
+@dataclass(frozen=True)
+class ModelInfo:
+    model_type: str
+    tokenizer: Any
 
-    return AutoTokenizer.from_pretrained(
-        path, trust_remote_code=True, local_files_only=True
+
+def unreachable_message(server_url):
+    port = urlsplit(server_url).port or 8031
+    return (
+        f"Cannot reach a ready model server at {server_url}. Start it on the GPU server "
+        f"with `bash start.sh model`, then keep `ssh -N -L {port}:127.0.0.1:{port} user@server` "
+        "running on this computer."
     )
 
 
-async def real_resources(*, mode, settings_path, server_url, tokenizer_path, model_type="omni", demo_path=None):
+def fetch_model(server_url, timeout_s=30.0):
+    """Read the served model type and load its tokenizer from the model server."""
+    from transformers import Qwen2TokenizerFast
+
+    # The model URL is a direct endpoint (usually an SSH tunnel), never a proxy target.
+    with httpx.Client(base_url=server_url, timeout=timeout_s, trust_env=False) as client:
+        try:
+            health = client.get("/healthz")
+            if health.status_code != 200 or health.json().get("ready") is not True:
+                raise RuntimeError(unreachable_message(server_url))
+            files = client.get("/tokenizer").raise_for_status().json()["files"]
+        except (httpx.HTTPError, ValueError, KeyError) as exc:
+            raise RuntimeError(unreachable_message(server_url)) from exc
+    with tempfile.TemporaryDirectory(prefix="venus-tokenizer-") as directory:
+        for name, text in files.items():
+            (Path(directory) / Path(name).name).write_text(text, encoding="utf-8")
+        tokenizer = Qwen2TokenizerFast.from_pretrained(directory)
+    return ModelInfo(health.json()["model_type"], tokenizer)
+
+
+async def real_resources(*, mode, settings_path, server_url, tokenizer, model_type, demo_path=None):
     if mode not in {"omni", "audio"}:
         raise ValueError("Unknown input mode")
-    tokenizer = await asyncio.to_thread(
-        load_tokenizer, str(Path(tokenizer_path).resolve())
-    )
     setup = load_setup(settings_path)
     duplex, model_timeout = frontend_settings(demo_path, setup.duplex)
     agent = build_harness(setup)

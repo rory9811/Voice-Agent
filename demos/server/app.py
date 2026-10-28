@@ -17,9 +17,7 @@ from .session import WebAgentSession
 from demos.variants import model_name
 
 
-def create_app(
-    *, settings_path, tokenizer_path, model_server_url="http://127.0.0.1:8031", model_type="omni", demo_path=None
-):
+def create_app(*, settings_path, model_type, tokenizer, model_server_url, demo_path=None):
     frontend_model = model_name(model_type)
     configuration = WebConfiguration(settings_path, demo_path=demo_path)
     static = Path(__file__).resolve().parents[1] / "static"
@@ -146,7 +144,7 @@ def create_app(
             partial(
                 real_resources,
                 server_url=model_server_url,
-                tokenizer_path=tokenizer_path,
+                tokenizer=tokenizer,
                 model_type=model_type,
                 demo_path=demo_path,
             ),

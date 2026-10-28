@@ -63,7 +63,7 @@ class WorkspaceSettingsTests(unittest.TestCase):
     def test_incomplete_setup_rejects_session_then_explicit_path_makes_ready(self):
         with tempfile.TemporaryDirectory() as tmp, patch('shutil.which', return_value='/bin/codex'), patch.dict(os.environ, {'GEMINI_API_KEY': '', 'GOOGLE_API_KEY': ''}):
             path = Path(tmp)/'harness.json'
-            app = create_app(settings_path=path, tokenizer_path='/unused')
+            app = create_app(settings_path=path, model_type='omni', tokenizer=None, model_server_url='http://unused')
             with TestClient(app) as client:
                 self.assertFalse(client.get('/api/status').json()['configured'])
                 with client.websocket_connect('/ws') as socket:

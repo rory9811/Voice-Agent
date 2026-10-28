@@ -75,7 +75,7 @@ class ModelModeTests(unittest.TestCase):
     def test_web_status_and_invalid_modes_are_enforced_server_side(self):
         with tempfile.TemporaryDirectory() as tmp:
             for mode,wrong in [('audio','omni'),('omni','audio')]:
-                app=create_app(settings_path=Path(tmp)/'settings.json',tokenizer_path='/unused',model_type=mode)
+                app=create_app(settings_path=Path(tmp)/'settings.json',model_type=mode,tokenizer=None,model_server_url='http://unused')
                 with TestClient(app) as client:
                     result=client.get('/api/status').json()
                     self.assertEqual(result['model_type'],mode)
