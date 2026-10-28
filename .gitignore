@@ -1,0 +1,28 @@
+# Local settings and credentials
+.env
+.env.*
+!.env.example
+
+# Deployment environments, checkpoints and generated outputs
+/runtime/
+/model_weight/
+/Realtime-Venus-Audio/
+/Realtime-Venus-Omni/
+/output/
+/config.yaml
+/.cache/huggingface/
+frontend/**/output/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+.DS_Store
+
+# Private deployments and task outputs
+/config.local*.json
+/harness/config.local*.json
+/workspace/

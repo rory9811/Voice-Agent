@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#07111f" />
+    <script src="/static/theme.js"></script>
+    <meta
+      name="description"
+      content="See, listen, and get things done. A live conversation with Realtime-Venus."
+    />
+    <title>Realtime Venus — Stay in the moment</title>
+    <link id="brand-icon" rel="icon" type="image/png" href="/static/venus-logo.png" />
+    <link rel="stylesheet" href="/static/style.css?v=20260921-model-modes" />
+  </head>
+  <body data-phase="idle" data-mode="audio">
+    <div class="atmosphere" aria-hidden="true">
+      <div class="haze haze-one"></div>
+      <div class="haze haze-two"></div>
+      <div class="stars"></div>
+    </div>
+    <svg
+      class="icon-library"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <symbol id="i-mic" viewBox="0 0 24 24">
+        <rect x="9" y="2" width="6" height="12" rx="3" />
+        <path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8" />
+      </symbol>
+      <symbol id="i-mic-off" viewBox="0 0 24 24">
+        <path
+          d="m3 3 18 18M9 9v3a3 3 0 0 0 5 2M9 5a3 3 0 0 1 6 0v4m-10 1v2a7 7 0 0 0 12 5m2-7v2c0 .7-.1 1.4-.3 2M12 19v3m-4 0h8"
+        />
+      </symbol>
+      <symbol id="i-camera" viewBox="0 0 24 24">
+        <rect x="2" y="5" width="14" height="14" rx="3" />
+        <path d="m16 9 6-3v12l-6-3" />
+      </symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24">
+        <path
+          d="M12 16V3m-5 5 5-5 5 5M4 16v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"
+        />
+      </symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24">
+        <path d="M4 12h16m-6-6 6 6-6 6" />
+      </symbol>
+      <symbol id="i-close" viewBox="0 0 24 24">
+        <path d="m6 6 12 12M6 18 18 6" />
+      </symbol>
+      <symbol id="i-sound" viewBox="0 0 24 24">
+        <path
+          d="m11 4-6 5H2v6h3l6 5zM16 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"
+        />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path d="M4 7h7m6 0h3M4 17h3m6 0h7" />
+        <circle cx="14" cy="7" r="3" />
+        <circle cx="10" cy="17" r="3" />
+      </symbol>
+      <symbol id="i-history" viewBox="0 0 24 24">
+        <path d="M5 6a9 9 0 1 1-2 9M2 3v5h5m5-2v6l4 2" />
+      </symbol>
+      <symbol id="i-reset" viewBox="0 0 24 24">
+        <path d="M20 7a9 9 0 1 0 1 9M20 2v5h-5" />
+      </symbol>
+      <symbol id="i-spark" viewBox="0 0 24 24">
+        <path d="m12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4z" />
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <path d="m5 12 4 4L19 6" />
+      </symbol>
+      <symbol id="i-file" viewBox="0 0 24 24">
+        <path
+          d="M14 2H5a1 1 0 0 0-1 1v18a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V8zM14 2v6h6M8 13h8m-8 4h5"
+        />
+      </symbol>
+      <symbol id="i-download" viewBox="0 0 24 24">
+        <path d="M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4" />
+      </symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24">
+        <path d="m9 5 7 7-7 7" />
+      </symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="4" />
+        <path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5" />
+      </symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24">
+        <path d="M20.5 13A8.5 8.5 0 0 1 11 3.5 8.5 8.5 0 1 0 20.5 13Z" />
+      </symbol>
+    </svg>
+    <header class="topbar">
+      <a class="wordmark" href="/" aria-label="Realtime Venus home"
+        ><img data-brand-logo src="/static/venus-logo-white.gif" width="48" height="48" alt="" /><span
+          >realtime <strong>venus</strong
+          ><span class="brand-point">.</span></span
+        ></a
+      >
+      <nav class="top-actions" aria-label="Conversation controls">
+        <span id="connection-state" class="connection"
+          ><span class="status-dot"></span
+          ><span data-i18n="available">Ready when you are</span></span
+        >
+        <button
+          id="tasks-toggle"
+          class="task-pill"
+          hidden
+          aria-controls="task-tray"
+          aria-expanded="false"
+        >
+          <svg class="icon"><use href="#i-spark" /></svg
+          ><span id="task-count">0</span><span data-i18n="tasks">tasks</span>
+        </button>
+        <button
+          id="history-button"
+          class="icon-button"
+          data-label="history"
+          aria-label="Conversation history"
+        >
+          <svg class="icon"><use href="#i-history" /></svg>
+        </button>
+        <button
+          id="settings-button"
+          class="icon-button"
+          data-label="settings"
+          aria-label="Settings"
+        >
+          <svg class="icon"><use href="#i-settings" /></svg>
+        </button>
+        <button id="theme-button" class="icon-button" aria-label="Switch to light theme">
+          <svg class="icon theme-sun"><use href="#i-sun" /></svg>
+          <svg class="icon theme-moon"><use href="#i-moon" /></svg>
+        </button>
+        <button
+          id="language-button"
+          class="language-button"
+          aria-label="Switch to Chinese"
+        >
+          中
+        </button>
+      </nav>
+    </header>
+    <main class="experience" id="experience">
+      <div class="introduction">
+        <p class="eyebrow"><span></span><b id="frontend-model-name" style="font-weight:inherit">REALTIME-VENUS</b></p>
+        <h1>
+          <span data-i18n="headline">Stay in the moment.</span><br /><em
+            data-i18n="headlineAccent"
+            >We’ll take it further.</em
+          >
+        </h1>
+        <p class="lede" data-media-key="intro">
+          A conversation that sees, listens, and gets things done.
+        </p>
+      </div>
+      <section class="presence" aria-label="Venus interaction space">
+        <canvas id="presence-canvas" aria-hidden="true"></canvas>
+        <div class="orb-caption" id="orb-caption">
+          <span class="orb-dot"></span
+          ><span id="presence-label" data-i18n="presenceIdle"
+            >A little presence. A world of possibilities.</span
+          >
+        </div>
+        <div id="media-preview" class="media-preview" hidden>
+          <video id="preview-video" muted playsinline></video>
+          <audio id="preview-audio" muted controls hidden></audio>
+          <div class="preview-top">
+            <span class="preview-badge"
+              ><i></i
+              ><span id="preview-label" data-i18n="yourView"
+                >Your perspective</span
+              ></span
+            ><button
+              id="replace-video"
+              class="subtle-button"
+              hidden
+              data-media-key="replaceVideo"
+            >
+              Change video
+            </button>
+          </div>
+          <div class="preview-bottom">
+            <span id="video-name"></span><span id="video-time"></span>
+          </div>
+        </div>
+        <label
+          id="upload-zone"
+          class="upload-zone"
+          hidden
+          for="video-file"
+          tabindex="0"
+        >
+          <span class="upload-symbol"
+            ><svg class="icon"><use href="#i-upload" /></svg
+          ></span>
+          <strong data-i18n="dropTitle">Bring a moment to Venus</strong>
+          <span data-media-key="dropHint">Drop a video here, or choose a file</span>
+          <small data-media-key="dropTypes">MP4, MOV or WebM · up to 200 MB</small>
+        </label>
+        <input id="video-file" type="file" accept="video/*" hidden />
+      </section>
+      <div id="mic-visualizer" class="mic-visualizer" hidden>
+        <div class="mic-heading">
+          <span class="mic-identity"><svg class="icon"><use id="mic-wave-icon" href="#i-mic" /></svg><span id="mic-wave-label">Your voice</span></span>
+          <span id="mic-pitch" class="mic-pitch"></span>
+        </div>
+        <canvas id="mic-waveform" aria-hidden="true"></canvas>
+        <span class="sr-only" data-i18n="waveformDescription">Live microphone waveform. Height follows volume; closer waves indicate higher pitch.</span>
+      </div>
+      <section
+        id="caption-area"
+        class="caption-area"
+        aria-live="polite"
+        aria-atomic="false"
+      >
+        <div id="caption" class="caption">
+          <span id="caption-speaker" class="caption-speaker" hidden>VENUS</span>
+          <p id="caption-text">Say what’s on your mind. We’ll go from there.</p>
+          <span class="speech-wave" aria-hidden="true"
+            ><i></i><i></i><i></i><i></i><i></i
+          ></span>
+        </div>
+      </section>
+      <div class="control-area">
+        <div class="mode-switch" role="group" aria-label="Input mode">
+          <button
+            class="mode-button selected"
+            data-mode="audio"
+            aria-pressed="true"
+          >
+            <svg class="icon"><use href="#i-mic" /></svg
+            ><span data-i18n="voiceMode">Voice</span>
+          </button>
+          <button class="mode-button" data-mode="camera" aria-pressed="false">
+            <svg class="icon"><use href="#i-camera" /></svg
+            ><span data-i18n="cameraMode">Camera</span>
+          </button>
+          <button class="mode-button" data-mode="file" aria-pressed="false">
+            <svg class="icon"><use href="#i-upload" /></svg
+            ><span data-media-key="videoMode">Video</span>
+          </button>
+        </div>
+        <aside id="setup-banner" class="setup-banner" hidden>
+          <div><strong data-i18n="setupTitle">Finish Settings before your first conversation</strong>
+            <p data-i18n="setupIntro">A few required settings are missing. Open Settings to see what to complete.</p></div>
+          <button id="complete-settings" class="secondary-button" data-i18n="completeSettings">Complete Settings</button>
+        </aside>
+        <div class="session-controls">
+          <button
+            id="mute-mic"
+            class="round-control"
+            hidden
+            aria-pressed="false"
+            data-label="muteMic"
+            aria-label="Mute microphone"
+          >
+            <svg class="icon"><use href="#i-mic" /></svg>
+          </button>
+          <button id="start-button" class="start-button">
+            <span class="start-symbol"
+              ><svg class="icon"><use href="#i-spark" /></svg></span
+            ><span id="start-label" data-i18n="start">Start a conversation</span
+            ><svg class="icon start-arrow"><use href="#i-arrow" /></svg>
+          </button>
+          <button id="stop-button" class="stop-button" hidden>
+            <span></span><span data-i18n="end">End conversation</span>
+          </button>
+          <button
+            id="mute-output"
+            class="round-control"
+            hidden
+            aria-pressed="false"
+            data-label="muteOutput"
+            aria-label="Mute speaker"
+          >
+            <svg class="icon"><use href="#i-sound" /></svg>
+          </button>
+        </div>
+        <p id="control-hint" class="control-hint" data-i18n="startHint">
+          Your microphone turns on only when you begin.
+        </p>
+        <div id="upload-progress" class="upload-progress" hidden>
+          <span></span>
+        </div>
+      </div>
+    </main>
+    <footer class="page-footer">
+      <span class="footer-tag"
+        ><i></i
+        ><span data-i18n="footer"
+          >LIVE IN THE MOMENT. WORK BEYOND IT.</span
+        ></span
+      ><a
+        href="https://realtime-venus.github.io/"
+        target="_blank"
+        rel="noreferrer"
+        ><span data-i18n="research">Meet the research</span
+        ><svg class="icon"><use href="#i-arrow" /></svg
+      ></a>
+    </footer>
+    <aside
+      id="task-tray"
+      class="task-tray"
+      aria-labelledby="task-title"
+      aria-hidden="true"
+      inert
+    >
+      <div class="tray-heading">
+        <div>
+          <span class="eyebrow" data-i18n="taskEyebrow"
+            >A LITTLE HELP, IN THE BACKGROUND</span
+          >
+          <h2 id="task-title" data-i18n="taskTitle">Consider it in motion.</h2>
+        </div>
+        <button
+          id="close-tasks"
+          class="icon-button"
+          data-label="minimize"
+          aria-label="Minimize tasks"
+        >
+          <svg class="icon"><use href="#i-chevron" /></svg>
+        </button>
+      </div>
+      <p class="tray-description" data-i18n="taskHint">
+        Keep talking. Venus will bring the results back to you.
+      </p>
+      <div id="task-list" class="task-list" aria-live="polite"></div>
+    </aside>
+    <dialog
+      id="history-dialog"
+      class="dialog history-dialog"
+      aria-labelledby="history-title"
+    >
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow" data-i18n="yourConversation">YOUR CONVERSATION</p>
+          <h2 id="history-title" data-i18n="historyTitle">
+            A thread of moments.
+          </h2>
+        </div>
+        <button
+          class="icon-button dialog-close"
+          data-label="close"
+          aria-label="Close"
+        >
+          <svg class="icon"><use href="#i-close" /></svg>
+        </button>
+      </div>
+      <div id="transcript" class="transcript">
+        <p class="empty-copy" data-i18n="historyEmpty">
+          The things Venus says will find a home here.
+        </p>
+      </div>
+      <div class="dialog-footer">
+        <button id="reset-button" class="secondary-button">
+          <svg class="icon"><use href="#i-reset" /></svg
+          ><span data-i18n="newConversation">Start fresh</span></button
+        ><button
+          id="save-transcript"
+          class="text-button"
+          data-i18n="saveTranscript"
+        >
+          Save conversation
+        </button>
+      </div>
+    </dialog>
+    <dialog
+      id="settings-dialog"
+      class="dialog settings-dialog"
+      aria-label="Settings" data-label="settings"
+    >
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow" data-i18n="makeItYours">MAKE IT YOURS</p>
+        </div>
+        <button
+          class="icon-button dialog-close"
+          data-label="close"
+          aria-label="Close"
+        >
+          <svg class="icon"><use href="#i-close" /></svg>
+        </button>
+      </div>
+      <section id="settings-guidance" class="settings-guidance" role="status" hidden>
+        <strong data-i18n="setupTitle">Finish Settings before your first conversation</strong>
+        <p id="settings-guidance-copy"></p>
+        <ul id="settings-issues"></ul>
+      </section>
+      <section id="codex-login-panel" class="settings-guidance">
+        <strong data-i18n="codexLoginTitle">Codex login on the server</strong>
+        <p id="codex-login-status" role="status"></p>
+        <p id="codex-login-help" data-i18n="codexLoginHelp" hidden>On the server, run codex login --device-auth using your configured Codex executable, complete login, then recheck here.</p>
+        <button id="recheck-codex" type="button" class="secondary-button" data-i18n="codexRecheck">Recheck login</button>
+      </section>
+      <form id="settings-form" novalidate>
+        <label><span data-i18n="workspace">Task workspace</span>
+          <input id="backend-workspace" required autocomplete="off" spellcheck="false" aria-describedby="workspace-hint" />
+        </label>
+        <p id="workspace-hint" class="field-hint" data-i18n="workspaceHint">Required. Choose a task directory on the server; relative paths are resolved from the settings file’s directory.</p>
+
+        <fieldset>
+          <legend data-i18n="devices">Your devices</legend>
+          <label
+            ><span data-i18n="microphone">Microphone</span
+            ><select id="microphone-device">
+              <option value="" data-i18n="defaultDevice">System default</option>
+            </select></label
+          ><label
+            ><span data-i18n="camera">Camera</span
+            ><select id="camera-device">
+              <option value="" data-i18n="defaultDevice">System default</option>
+            </select></label
+          >
+          <p class="field-hint" data-i18n="deviceHint">
+            Device names appear after you allow access.
+          </p>
+        </fieldset>
+        <fieldset>
+          <legend data-i18n="responses">Your conversation</legend>
+          <label
+            ><span data-i18n="replyLanguage">Preferred reply language</span
+            ><select id="reply-language">
+              <option value="zh">中文</option>
+              <option value="en">English</option>
+            </select></label
+          >
+          <label>
+            <span data-i18n="proactiveProgress">Speak task progress automatically</span>
+            <select id="proactive-progress" aria-describedby="proactive-progress-hint">
+              <option value="false" data-i18n="proactiveProgressOff">Off (default)</option>
+              <option value="true" data-i18n="proactiveProgressOn">On — I agree to spoken progress updates</option>
+            </select>
+          </label>
+          <p id="proactive-progress-hint" class="field-hint" data-i18n="proactiveProgressHint">
+            When enabled, new progress is spoken in one short sentence. Final results
+            and progress you ask for are always available. Applies to new conversations.
+          </p>
+          <label>
+            <span data-i18n="lengthPenalty">Speaking length (length_penalty)</span>
+            <input id="length-penalty" type="number" min="0.1" max="5"
+              step="any" value="0.8" required aria-describedby="length-penalty-hint" />
+          </label>
+          <p id="length-penalty-hint" class="field-hint" data-i18n="lengthPenaltyHint">
+            Default: 0.8. Below 1 encourages earlier turn endings; 1 keeps the
+            original behavior; above 1 encourages longer turns. Applies to new conversations.
+          </p>
+        </fieldset>
+        <details class="backend-settings">
+          <summary>
+            <span data-i18n="backendSettings">Task connection</span
+            ><svg class="icon"><use href="#i-chevron" /></svg>
+          </summary>
+          <p class="field-hint" data-i18n="backendHint">
+            Background tasks use the server’s existing Codex connection.
+          </p>
+          <label
+            ><span data-i18n="backendModel">Backend model</span
+            ><input
+              id="backend-model"
+              placeholder="Default"
+              autocomplete="off" /></label
+          ><label
+            ><span data-i18n="backendEffort">Task reasoning effort</span
+            ><select id="backend-effort">
+              <option value="" data-i18n="effortDefault">Server default</option>
+              <option value="minimal" data-i18n="effortMinimal">Minimal</option>
+              <option value="low" data-i18n="effortLow">Low · faster</option>
+              <option value="medium" data-i18n="effortMedium">Medium</option>
+              <option value="high" data-i18n="effortHigh">High</option>
+              <option value="xhigh" data-i18n="effortXhigh">Extra high</option>
+            </select></label>
+          <fieldset>
+            <legend data-i18n="routingSettings">Task routing</legend>
+            <label><span data-i18n="routingMode">Task mode</span>
+              <select id="routing-mode">
+                <option value="general" data-i18n="routingGeneral">General · direct (default)</option>
+                <option value="auto" data-i18n="routingAuto">Auto · automatic routing</option>
+              </select></label>
+            <p class="field-hint" data-i18n="routingModeHint">General sends each request straight to the task agent. Auto first chooses how to handle it.</p>
+            <fieldset id="auto-routing-options" hidden disabled>
+            <legend data-i18n="autoRoutingSettings">Auto routing settings</legend>
+            <p class="field-hint" data-i18n="routingHint">Only used in Auto mode. Low effort is recommended for faster routing.</p>
+            <label><span data-i18n="modelProvider">Provider</span>
+              <select id="routing-provider">
+                <option value="codex">Codex</option>
+                <option value="gemini" data-i18n="geminiOfficial">Gemini</option>
+              </select></label>
+            <label><span data-i18n="routingModel">Routing model</span>
+              <input id="routing-model" autocomplete="off" /></label>
+            <p class="field-hint" data-i18n="modelInheritHint">Blank model: Codex inherits the task model; Gemini uses the default Gemini model below.</p>
+            <label><span data-i18n="reasoningEffort">Reasoning effort</span>
+              <select id="routing-effort">
+              <option value="minimal" data-i18n="effortMinimal">Minimal</option>
+              <option value="low" data-i18n="effortLow">Low · faster</option>
+              <option value="medium" data-i18n="effortMedium">Medium</option>
+              <option value="high" data-i18n="effortHigh">High</option>
+              <option value="xhigh" data-i18n="effortXhigh">Extra high</option>
+            </select></label>
+            <label><span data-i18n="routingTimeout">Routing time limit (seconds)</span>
+              <input id="routing-timeout" type="number" min="1" max="180" step="1" required /></label>
+            <p class="field-hint" data-i18n="routingTimeoutHint">Default: 30 seconds. A timeout reports an error without starting the task; it does not speed up a slow model.</p>
+            </fieldset>
+          </fieldset>
+          <fieldset>
+            <legend data-i18n="responseSettings">Progress and result summaries</legend>
+            <label><span data-i18n="modelProvider">Provider</span>
+              <select id="response-provider">
+                <option value="codex">Codex</option>
+                <option value="gemini" data-i18n="geminiOfficial">Gemini</option>
+              </select></label>
+            <label><span data-i18n="responseModel">Summary model</span>
+              <input id="response-model" autocomplete="off" /></label>
+            <p class="field-hint" data-i18n="responseHint">Summarizes progress and final results. Independent of routing and multimodal.</p>
+            <label><span data-i18n="reasoningEffort">Reasoning effort</span>
+              <select id="response-effort">
+              <option value="minimal" data-i18n="effortMinimal">Minimal</option>
+              <option value="low" data-i18n="effortLow">Low · faster</option>
+              <option value="medium" data-i18n="effortMedium">Medium</option>
+              <option value="high" data-i18n="effortHigh">High</option>
+              <option value="xhigh" data-i18n="effortXhigh">Extra high</option>
+            </select></label>
+          </fieldset>
+          <fieldset>
+            <legend data-i18n="multimodalSettings">Direct answers and multimodal understanding</legend>
+            <label><span data-i18n="modelProvider">Provider</span>
+              <select id="multimodal-provider">
+                <option value="codex">Codex</option>
+                <option value="gemini" data-i18n="geminiOfficial">Gemini</option>
+              </select></label>
+            <label><span data-i18n="multimodalModel">Multimodal model</span>
+              <input id="multimodal-model" autocomplete="off" /></label>
+            <p id="multimodal-codex-audio-hint" class="field-hint" data-i18n="codexAudioHint" hidden>Codex supports text and images, but cannot understand audio. Choose Gemini for audio understanding.</p>
+            <p class="field-hint" data-media-key="multimodalHint">Used when Auto routes to multimodal. This does not change the streaming Omni model.</p>
+            <label><span data-i18n="reasoningEffort">Reasoning effort</span>
+              <select id="multimodal-effort">
+              <option value="minimal" data-i18n="effortMinimal">Minimal</option>
+              <option value="low" data-i18n="effortLow">Low · faster</option>
+              <option value="medium" data-i18n="effortMedium">Medium</option>
+              <option value="high" data-i18n="effortHigh">High</option>
+              <option value="xhigh" data-i18n="effortXhigh">Extra high</option>
+            </select></label>
+          </fieldset>
+          <fieldset>
+            <legend data-i18n="geminiSettings">Official Gemini connection</legend>
+            <p class="field-hint" data-i18n="geminiHint">Calls go directly to Google. Used only by roles explicitly set to Gemini; General still uses Codex.</p>
+            <label><span data-i18n="geminiDefaultModel">Default Gemini model</span>
+              <input id="gemini-model" autocomplete="off" required /></label>
+            <label><span>Gemini API Key</span>
+              <input id="gemini-key" type="password" autocomplete="new-password" spellcheck="false" /></label>
+            <p id="gemini-key-status" class="field-hint"></p>
+            <p class="field-hint" data-i18n="geminiKeyHint">Leave blank to keep the saved key or use GEMINI_API_KEY / GOOGLE_API_KEY on the server. Saved keys are never returned to the browser.</p>
+          </fieldset>
+          <p class="field-hint" data-i18n="effortHint">Save and start a new conversation to apply changes.</p>
+          <label
+            ><span data-i18n="codexPath">Codex executable</span
+            ><input id="backend-binary" required autocomplete="off"
+          /></label>
+        </details>
+        <p id="settings-message" class="field-hint" role="status"></p>
+        <div class="dialog-footer">
+          <span class="connection"
+            ><span class="status-dot"></span>Realtime-Venus-Harness</span
+          ><button
+            type="submit"
+            class="secondary-button"
+            id="save-settings"
+            data-i18n="saveSettings"
+          >
+            Save settings
+          </button>
+        </div>
+      </form>
+    </dialog>
+    <div id="toast" class="toast" role="status" hidden></div>
+    <script type="module" src="/static/app.js?v=20260921-model-modes"></script>
+  </body>
+</html>

@@ -1,0 +1,6 @@
+# Realtime-Venus-Harness media support (no model or browser dependencies)
+Pillow>=10.4,<12
+av>=12,<19
+
+# Official Gemini REST transport
+httpx>=0.28,<0.29

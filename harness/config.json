@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "language": "zh",
+  "workspace": "",
+  "codex": {
+    "command": [
+      "codex",
+      "app-server"
+    ],
+    "model": null,
+    "effort": "low",
+    "network_access": true,
+    "vision": {
+      "fps": 1,
+      "window_s": 5,
+      "max_frames": 5,
+      "max_images": 12,
+      "max_dimension": 1280,
+      "max_image_bytes": 2000000,
+      "max_source_bytes": 64000000,
+      "decode_timeout_s": 10,
+      "max_decode_frames": 12000
+    },
+    "control_timeout_s": 30,
+    "execution_timeout_s": 1800,
+    "interrupt_timeout_s": 10,
+    "result_ttl_s": 300
+  },
+  "routing": {
+    "model": null,
+    "effort": "low",
+    "timeout_s": 30.0,
+    "provider": "codex",
+    "mode": "general"
+  },
+  "responses": {
+    "model": null,
+    "effort": "low",
+    "timeout_s": 180.0,
+    "provider": "codex"
+  },
+  "multimodal": {
+    "model": null,
+    "effort": "low",
+    "timeout_s": 180.0,
+    "provider": "codex"
+  },
+  "gemini": {
+    "model": "gemini-flash-latest",
+    "api_key": ""
+  },
+  "feedback": {
+    "proactive_progress": false,
+    "progress_interval_s": 30,
+    "progress_timeout_s": 180,
+    "read_retry_s": 30,
+    "first_notice_s": 30,
+    "repeat_notice_s": 60,
+    "max_repeat_s": 120,
+    "poll_s": 0.25,
+    "notice_ttl_s": 60,
+    "queue_timeout_s": 300,
+    "skill_timeout_s": 300,
+    "stage_timeout_s": 180,
+    "journal_path": null
+  },
+  "harness": {
+    "buffer": {
+      "retention_ms": 60000,
+      "context_window_ms": 12000,
+      "max_audio_bytes": 8388608,
+      "max_video_bytes": 33554432,
+      "max_video_frames": 48,
+      "selected_video_frames": 12,
+      "played_tts_max_chars": 320
+    },
+    "workspace": {
+      "root": null,
+      "documents_subdir": "delegate_documents",
+      "max_document_chars": 500000
+    },
+    "delegate": {
+      "max_query_chars": 4000,
+      "max_result_chars": 3000,
+      "result_ttl_ms": 600000,
+      "request_timeout_s": 180,
+      "web_search_timeout_s": 45.0,
+      "oralization_enabled": true,
+      "oralization_timeout_s": 180,
+      "slow_api_notice_after_s": 10.0,
+      "max_relation_candidates": 8,
+      "default_routing_locked": true,
+      "default_allow_web_search": false,
+      "default_input_mode": "text_multimodal",
+      "default_operation": "answer",
+      "default_response_mode": "two_stage"
+    },
+    "runtime": {
+      "max_concurrent_delegate_requests": 8,
+      "max_buffered_delegate_results": 16
+    },
+    "result_management": {
+      "enabled": true,
+      "initial_silence_ms": 800,
+      "min_silence_ms": 250,
+      "silence_decay": 0.05,
+      "max_queue_wait_ms": 8000,
+      "frontend_reaction_timeout_ms": 2500,
+      "max_playback_wait_ms": 60000,
+      "chars_per_second": 4.0,
+      "speech_rms_threshold": 500.0,
+      "speech_hold_ms": 250,
+      "manager_tick_ms": 50
+    }
+  }
+}

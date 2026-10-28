@@ -1,0 +1,6 @@
+# Shared dependencies for the frontend inference examples and the Demo.
+-r demos/requirements.txt
+
+# Shared checkpoint downloader.
+huggingface_hub>=0.34
+PyYAML>=6.0

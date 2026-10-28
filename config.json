@@ -1,0 +1,19 @@
+{
+  "model": {
+    "type": "video",
+    "path": "Realtime-Venus-Omni",
+    "reference_audio": "",
+    "port": 8031,
+    "memory_minutes": 40,
+    "length_penalty": 0.8,
+    "timeout_s": 180
+  },
+  "harness": {
+    "config": "harness/config.json"
+  },
+  "web": {
+    "host": "127.0.0.1",
+    "port": 8032
+  },
+  "startup_timeout": 600
+}

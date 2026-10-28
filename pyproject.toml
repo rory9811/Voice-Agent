@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68,<81"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "Realtime-Venus-Harness"
+version = "0.1.0"
+description = "Asynchronous task execution for Realtime-Venus streaming assistants"
+readme = "harness/README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["harness/requirements.txt"]}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["harness", "harness.*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+harness = ["config.json"]
