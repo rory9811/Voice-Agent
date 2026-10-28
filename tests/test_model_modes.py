@@ -45,16 +45,18 @@ class ModelModeTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'Realtime-Venus-Audio'):
                 select_checkpoint(root,'audio',configured=str(omni))
 
-    def test_launcher_forwards_variant_to_both_services(self):
+    def test_model_role_forwards_variant(self):
         for mode,kind in [('audio','minicpmo'),('omni','realtime_venus_omni')]:
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
                 root=Path(tmp);path=checkpoint(root/'weights',kind)
-                with patch.dict('os.environ',{'VENUS_ROOT':tmp}), patch('demos.launcher.cli.subprocess.run'), patch('demos.launcher.cli.setup_backend'), patch('demos.launcher.cli.ensure_ports_available'), patch('demos.launcher.cli.StackSupervisor') as supervisor:
-                    _run([mode,'--model-path',str(path)])
-                    cfg,model,web=supervisor.call_args.args
-                    self.assertEqual(cfg.model_type,mode)
-                    self.assertEqual(model[model.index('--model-type')+1],mode)
-                    self.assertEqual(web[web.index('--model-type')+1],mode)
+                with patch.dict('os.environ',{'VENUS_ROOT':tmp}), patch('demos.launcher.cli.subprocess.run'), patch('demos.launcher.cli.ensure_port_available'), patch('demos.launcher.cli.StackSupervisor') as supervisor:
+                    _run(['model','--type',mode,'--model-path',str(path)])
+                    _,name,command,health,_,_=supervisor.call_args.args
+                    self.assertEqual(name,'model')
+                    self.assertIn('demos.model.server',command)
+                    self.assertEqual(command[command.index('--model-type')+1],mode)
+                    self.assertEqual(command[command.index('--host')+1],'127.0.0.1')
+                    self.assertEqual(health,'http://127.0.0.1:8031/healthz')
 
     def test_audio_loader_disables_vision_without_video_memory(self):
         for mode in ['audio','omni']:

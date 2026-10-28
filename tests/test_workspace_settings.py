@@ -54,11 +54,11 @@ class WorkspaceSettingsTests(unittest.TestCase):
 
     def test_launcher_starts_for_setup_without_default_workspace(self):
         with tempfile.TemporaryDirectory() as tmp, patch('shutil.which', return_value='/bin/codex'), patch('subprocess.run', return_value=SimpleNamespace(returncode=0)), patch.dict(os.environ, {'GENERAL_CODEX_BINARY': '/bin/codex'}):
-            config = SimpleNamespace(runtime=Path(tmp)/'runtime', settings=Path(tmp)/'runtime/harness.json')
-            setup_backend(config, False)
-            self.assertEqual(load_setup(config.settings).data['workspace'], '')
-            self.assertFalse(WebConfiguration(config.settings).status())
-            self.assertFalse((config.runtime/'workspace').exists())
+            runtime, settings = Path(tmp)/'runtime', Path(tmp)/'runtime/harness.json'
+            setup_backend(settings, None, runtime, False)
+            self.assertEqual(load_setup(settings).data['workspace'], '')
+            self.assertFalse(WebConfiguration(settings).status())
+            self.assertFalse((runtime/'workspace').exists())
 
     def test_incomplete_setup_rejects_session_then_explicit_path_makes_ready(self):
         with tempfile.TemporaryDirectory() as tmp, patch('shutil.which', return_value='/bin/codex'), patch.dict(os.environ, {'GEMINI_API_KEY': '', 'GOOGLE_API_KEY': ''}):

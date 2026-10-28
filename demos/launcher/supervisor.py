@@ -1,4 +1,4 @@
-"""Own two child processes and clean up both on failure or shutdown."""
+"""Own one service process per role and record its state for --status/--stop."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from .config import LaunchConfig
 
 
 def process_start(pid: int) -> str | None:
@@ -32,8 +31,8 @@ def read_state(path: Path) -> dict:
     try:
         state = json.loads(path.read_text())
         state["alive"] = (
-            bool(state.get("start_ticks"))
-            and process_start(state["pid"]) == state["start_ticks"]
+            bool(state.get("started"))
+            and process_start(state["pid"]) == state["started"]
         )
         return state
     except (OSError, ValueError, KeyError, TypeError):
@@ -47,9 +46,13 @@ def write_state(path: Path, data: dict) -> None:
     temporary.replace(path)
 
 
+# Health probes target the local service or the SSH tunnel; never a proxy.
+_DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def healthy(url: str) -> bool:
     try:
-        with urllib.request.urlopen(url, timeout=2) as response:
+        with _DIRECT.open(url, timeout=2) as response:
             body = json.load(response)
             return response.status == 200 and (
                 body.get("ready") is True or body.get("status") == "ok"
@@ -59,78 +62,82 @@ def healthy(url: str) -> bool:
 
 
 class StackSupervisor:
+    """Own one service process (model or web) and clean it up on failure or shutdown."""
+
     def __init__(
-        self, config: LaunchConfig, model_command: list[str], web_command: list[str]
+        self,
+        runtime: Path,
+        name: str,
+        command: list[str],
+        health_url: str,
+        startup_timeout: float,
+        state: dict,
     ):
-        self.config = config
-        self.commands = {"model": model_command, "web": web_command}
-        self.children: dict[str, subprocess.Popen] = {}
+        self.runtime = runtime
+        self.name = name
+        self.command = command
+        self.health_url = health_url
+        self.startup_timeout = startup_timeout
+        self.child: subprocess.Popen | None = None
         self.stopping = False
         self.state = {
             "pid": os.getpid(),
-            "start_ticks": process_start(os.getpid()),
+            "started": process_start(os.getpid()),
             "status": "starting",
-            "model_type": config.model_type,
-            "model_path": str(config.model_path),
-            "model_port": config.model_port,
-            "web_port": config.web_port,
+            **state,
         }
 
-    def spawn(self, name: str) -> None:
+    def spawn(self) -> None:
         env = dict(os.environ)
-        env["PATH"] = (
-            str(self.config.runtime / "bin") + os.pathsep + env.get("PATH", "")
-        )
+        env["PATH"] = str(self.runtime / "bin") + os.pathsep + env.get("PATH", "")
         env.setdefault("OMP_NUM_THREADS", "1")
         env.setdefault("MKL_NUM_THREADS", "1")
         env.setdefault("MAX_NUM_FRAMES", "100000")
-        with (self.config.runtime / "logs" / f"{name}.log").open(
-            "ab", buffering=0
-        ) as log:
-            child = subprocess.Popen(
-                self.commands[name],
-                cwd=self.config.root,
+        with (self.runtime / "logs" / f"{self.name}.log").open("ab", buffering=0) as log:
+            self.child = subprocess.Popen(
+                self.command,
+                cwd=self.runtime.parent,
                 env=env,
                 stdin=subprocess.DEVNULL,
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
             )
-        self.children[name] = child
-        self.state[f"{name}_pid"] = child.pid
+        self.state["child_pid"] = self.child.pid
         self.save()
 
     def save(self) -> None:
-        write_state(self.config.runtime / "stack.json", self.state)
+        write_state(self.runtime / f"{self.name}.json", self.state)
 
-    def check_children(self) -> None:
-        for name, child in self.children.items():
-            if child.poll() is not None:
-                raise RuntimeError(
-                    f"{name} exited with code {child.returncode}; see runtime/logs/{name}.log"
-                )
+    def check_child(self) -> None:
+        if self.child is not None and self.child.poll() is not None:
+            raise RuntimeError(
+                f"{self.name} exited with code {self.child.returncode}; see runtime/logs/{self.name}.log"
+            )
 
-    def wait_ready(self, url: str) -> None:
-        deadline = time.monotonic() + self.config.startup_timeout
+    def wait_ready(self) -> None:
+        deadline = time.monotonic() + self.startup_timeout
         while not self.stopping:
-            self.check_children()
-            if healthy(url):
+            self.check_child()
+            if healthy(self.health_url):
                 return
             if time.monotonic() >= deadline:
-                raise TimeoutError(f"Service startup timed out: {url}")
+                raise TimeoutError(f"Service startup timed out: {self.health_url}")
             time.sleep(0.25)
         raise InterruptedError("Startup cancelled")
 
     def shutdown(self) -> None:
-        for child in reversed(list(self.children.values())):
+        child = self.child
+        if child is None:
+            return
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(child.pid, signal.SIGTERM)
+        try:
+            child.wait(timeout=20)
+        except subprocess.TimeoutExpired:
             with contextlib.suppress(ProcessLookupError):
-                os.killpg(child.pid, signal.SIGTERM)
-            try:
-                child.wait(timeout=20)
-            except subprocess.TimeoutExpired:
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(child.pid, signal.SIGKILL)
-                child.wait(timeout=5)
+                os.killpg(child.pid, signal.SIGKILL)
+            child.wait(timeout=5)
 
     def run(self, ready_callback=None) -> None:
         def stop(_signal, _frame):
@@ -139,19 +146,17 @@ class StackSupervisor:
         previous = {
             sig: signal.signal(sig, stop) for sig in (signal.SIGTERM, signal.SIGINT)
         }
-        (self.config.runtime / "logs").mkdir(parents=True, exist_ok=True)
+        (self.runtime / "logs").mkdir(parents=True, exist_ok=True)
         self.save()
         try:
-            self.spawn("model")
-            self.wait_ready(f"http://127.0.0.1:{self.config.model_port}/healthz")
-            self.spawn("web")
-            self.wait_ready(f"http://127.0.0.1:{self.config.web_port}/health")
+            self.spawn()
+            self.wait_ready()
             self.state["status"] = "ready"
             self.save()
             if ready_callback:
                 ready_callback()
             while not self.stopping:
-                self.check_children()
+                self.check_child()
                 time.sleep(0.25)
         except BaseException as exc:
             self.state["error"] = str(exc)

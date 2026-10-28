@@ -1,4 +1,4 @@
-"""One-command launch, health checks and shutdown for Realtime-Venus."""
+"""Launch, health-check and stop one Realtime-Venus role: model (GPU server) or web (local)."""
 
 from __future__ import annotations
 
@@ -13,25 +13,21 @@ import sys
 import time
 from pathlib import Path
 
-from .config import (
-    LaunchConfig,
-    checked_file,
-    ensure_ports_available,
-)
-from .supervisor import StackSupervisor, read_state
+from .config import checked_file, ensure_port_available
+from .supervisor import StackSupervisor, healthy, read_state
 from .variants import select_checkpoint
 from .options import parse_launch_options
 from demos.variants import model_name
 
 
-def setup_backend(config: LaunchConfig, allow_login: bool) -> None:
+def setup_backend(harness_path: Path, demo_path: Path | None, runtime: Path, allow_login: bool) -> None:
     from demos.settings import UserSetup
     from demos.server.configuration import WebConfiguration
 
-    configuration = WebConfiguration(config.settings, demo_path=getattr(config, "demo_path", None))
+    configuration = WebConfiguration(harness_path, demo_path=demo_path)
     setup = configuration.load()
     settings_changed = False
-    if not config.settings.exists():
+    if not harness_path.exists():
         setup.data["workspace"] = ""
         settings_changed = True
 
@@ -40,21 +36,21 @@ def setup_backend(config: LaunchConfig, allow_login: bool) -> None:
         os.getenv("GENERAL_CODEX_BINARY"),
         configured_binary,
         shutil.which("codex"),
-        str(config.runtime / "bin/codex"),
+        str(runtime / "bin/codex"),
     )
     binary = next(
         (resolved for candidate in candidates if candidate and (resolved := shutil.which(candidate))),
         None,
     )
     if not binary:
-        raise RuntimeError("Codex executable is missing. Run bash install.sh.")
+        raise RuntimeError("Codex executable is missing. Run bash install.sh web.")
     if binary != configured_binary:
         setup.data["codex"]["command"] = [binary, *setup.general.command[1:]]
         settings_changed = True
 
     if settings_changed:
         # Reconstruct derived settings after filling or repairing startup defaults.
-        setup = UserSetup(setup.data, config.settings)
+        setup = UserSetup(setup.data, harness_path)
     check = setup.check(web=False)
     if not check["ok"]:
         raise RuntimeError("; ".join(check["problems"]))
@@ -67,7 +63,7 @@ def setup_backend(config: LaunchConfig, allow_login: bool) -> None:
             raise RuntimeError(
                 f"Codex login required. Run {binary} login --device-auth, then retry."
             )
-        print("Complete Codex device login in your local browser.", flush=True)
+        print("Complete Codex device login in your browser.", flush=True)
         subprocess.run([binary, "login", "--device-auth"], check=True)
     if setup.data["workspace"]:
         setup.workspace.mkdir(parents=True, exist_ok=True)
@@ -75,28 +71,80 @@ def setup_backend(config: LaunchConfig, allow_login: bool) -> None:
         configuration.save_startup(setup.data)
 
 
-def show_access(config: LaunchConfig) -> None:
-    print(
-        f"\n{model_name(config.model_type)} API: http://127.0.0.1:{config.model_port}", flush=True
+def prepare_model(root: Path, args):
+    model = select_checkpoint(root, args.model_type, explicit=args.model_path)
+    ref = checked_file(Path(args.ref_audio) if args.ref_audio else model / "assets/HT_ref_audio.wav")
+    ensure_port_available("127.0.0.1", args.port)
+    python = os.getenv("VENUS_MODEL_PYTHON", sys.executable)
+    subprocess.run(
+        [
+            python,
+            "-c",
+            'import torch; assert torch.cuda.is_available(), "No CUDA GPU available"; print("GPU:", torch.cuda.get_device_name(0))',
+        ],
+        check=True,
+        timeout=60,
     )
-    print(f"Realtime-Venus-Harness: http://localhost:{config.web_port}", flush=True)
-    ssh = os.getenv("SSH_CONNECTION", "").split()
-    server = ssh[2] if len(ssh) == 4 else "<server>"
-    print("From your local computer, keep this SSH tunnel open:", flush=True)
-    print(
-        f"  ssh -N -L {config.web_port}:127.0.0.1:{config.web_port} {getpass.getuser()}@{server}",
-        flush=True,
-    )
-    print("Choose microphone or audio upload." if config.model_type == "audio" else "Choose camera with microphone or video upload.", flush=True)
-    print(f"Logs: {config.runtime}/logs; stop: bash start.sh --stop", flush=True)
+    command = [
+        python, "-m", "demos.model.server",
+        "--model-type", args.model_type,
+        "--model-path", str(model),
+        "--ref-audio", str(ref),
+        "--memory-minutes", str(args.memory_minutes),
+        # Never exposed beyond this host: the local computer reaches it through SSH.
+        "--host", "127.0.0.1",
+        "--port", str(args.port),
+    ]
+
+    def show():
+        ssh = os.getenv("SSH_CONNECTION", "").split()
+        server = ssh[2] if len(ssh) == 4 else "<server>"
+        print(f"\n{model_name(args.model_type)} API: http://127.0.0.1:{args.port} (this server only)", flush=True)
+        print("On your local computer, keep this SSH tunnel open, then run: bash start.sh web", flush=True)
+        print(f"  ssh -N -L {args.port}:127.0.0.1:{args.port} {getpass.getuser()}@{server}", flush=True)
+        print("Logs: runtime/logs/model.log; stop: bash start.sh model --stop", flush=True)
+
+    state = {"model_type": args.model_type, "model_path": str(model), "port": args.port}
+    print(f"Loading {model_name(args.model_type)}...", flush=True)
+    return command, f"http://127.0.0.1:{args.port}/healthz", state, show
+
+
+def prepare_web(root: Path, args):
+    from demos.server.resources import unreachable_message
+
+    runtime = root / "runtime"
+    ensure_port_available("127.0.0.1", args.port)
+    if args.host != "127.0.0.1":
+        ensure_port_available(args.host, args.port)
+    setup_backend(Path(args.harness_config), args.demo_config, runtime, allow_login=not args.no_login)
+    if not healthy(f"{args.model_url.rstrip('/')}/healthz"):
+        raise RuntimeError(unreachable_message(args.model_url))
+    command = [
+        sys.executable, "-m", "demos.server.cli",
+        "--model-server", args.model_url,
+        "--config", args.harness_config,
+        "--host", args.host,
+        "--port", str(args.port),
+    ]
+    if args.demo_config:
+        command += ["--demo-config", str(args.demo_config)]
+
+    def show():
+        print(f"\nRealtime-Venus: http://localhost:{args.port}", flush=True)
+        print(f"Model server: {args.model_url}", flush=True)
+        print("Logs: runtime/logs/web.log; stop: bash start.sh web --stop", flush=True)
+
+    state = {"model_url": args.model_url, "port": args.port}
+    return command, f"http://127.0.0.1:{args.port}/health", state, show
 
 
 def _run(argv=None):
     root = Path(os.getenv("VENUS_ROOT", Path.cwd())).expanduser().resolve()
-    parser, args, options, launch_argv = parse_launch_options(root, argv)
+    parser, args, child_argv = parse_launch_options(root, argv)
     runtime = root / "runtime"
     runtime.mkdir(exist_ok=True)
-    state = read_state(runtime / "stack.json")
+    state_path = runtime / f"{args.role}.json"
+    state = read_state(state_path)
     if args.status:
         print(json.dumps(state, ensure_ascii=False, indent=2))
         return
@@ -104,139 +152,58 @@ def _run(argv=None):
         if state["alive"]:
             os.kill(state["pid"], signal.SIGTERM)
             deadline = time.monotonic() + 50
-            while (
-                read_state(runtime / "stack.json")["alive"]
-                and time.monotonic() < deadline
-            ):
+            while read_state(state_path)["alive"] and time.monotonic() < deadline:
                 time.sleep(0.2)
-            if read_state(runtime / "stack.json")["alive"]:
+            if read_state(state_path)["alive"]:
                 raise RuntimeError(
                     "Shutdown is still in progress; inspect runtime/logs before retrying."
                 )
-        print("Realtime-Venus stack stopped.")
+        print(f"Realtime-Venus {args.role} service stopped.")
         return
     if state["alive"]:
         parser.error(
-            "This checkout already owns a running stack. Use --status or --stop."
+            f"This checkout already runs the {args.role} service. Use {args.role} --status or --stop."
         )
-    model = select_checkpoint(
-        root, args.model_type,
-        explicit=args.model_path,
-        configured=None,
-    )
-    ref = (
-        checked_file(root / Path(args.ref_audio))
-        if args.ref_audio
-        else checked_file(model / "assets/HT_ref_audio.wav")
-    )
-    config = LaunchConfig(
-        root,
-        model,
-        ref,
-        os.getenv("VENUS_MODEL_PYTHON", sys.executable),
-        sys.executable,
-        args.host,
-        args.model_port,
-        args.web_port,
-        args.memory_minutes,
-        args.startup_timeout,
-        args.model_type,
-        harness_path=Path(args.harness_config) if args.harness_config else None,
-        demo_path=args.demo_config,
-    )
-    if config.memory_minutes <= 0 or config.startup_timeout <= 0:
-        parser.error("Memory duration and startup timeout must be positive")
-    ensure_ports_available("127.0.0.1", (config.model_port, config.web_port))
-    if config.host != "127.0.0.1":
-        ensure_ports_available(config.host, (config.web_port,))
-    subprocess.run(
-        [
-            config.model_python,
-            "-c",
-            'import torch; assert torch.cuda.is_available(), "No CUDA GPU available"; print("GPU:", torch.cuda.get_device_name(0))',
-        ],
-        check=True,
-        timeout=60,
-    )
-    setup_backend(config, allow_login=not args.no_login)
+    prepare = prepare_model if args.role == "model" else prepare_web
+    command, health_url, info, show = prepare(root, args)
     if args.check:
-        print("Checkpoint, speech assets, ports, CUDA and backend: OK")
+        print(f"{args.role} prerequisites: OK")
         return
     if args.detach:
-        child_args = [
-            a for a in launch_argv if a != "--detach"
-        ]
         (runtime / "logs").mkdir(exist_ok=True)
-        with (runtime / "logs/stack.log").open("ab", buffering=0) as log:
+        child_args = [a for a in child_argv if a != "--detach"]
+        if args.role == "web" and "--no-login" not in child_args:
+            child_args.append("--no-login")
+        with (runtime / "logs" / f"{args.role}-launcher.log").open("ab", buffering=0) as log:
             child = subprocess.Popen(
-                [sys.executable, "-m", "demos", *child_args, "--no-login"],
+                [sys.executable, "-m", "demos", *child_args],
                 cwd=root,
                 stdin=subprocess.DEVNULL,
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
             )
-        deadline = time.monotonic() + config.startup_timeout * 2 + 90
+        deadline = time.monotonic() + args.startup_timeout + 90
         try:
             while child.poll() is None and time.monotonic() < deadline:
-                current = read_state(runtime / "stack.json")
+                current = read_state(state_path)
                 if current.get("pid") == child.pid and current.get("status") == "ready":
-                    show_access(config)
+                    show()
                     return
                 time.sleep(0.25)
-            raise RuntimeError("Stack startup failed; see runtime/logs/stack.log")
+            raise RuntimeError(
+                f"Startup failed; see runtime/logs/{args.role}-launcher.log"
+            )
         except BaseException:
             child.terminate()
             child.wait(timeout=50)
             raise
-    with (runtime / "stack.lock").open("w") as lock:
+    with (runtime / f"{args.role}.lock").open("w") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            parser.error("Another launcher owns this checkout")
-        model_command = [
-            config.model_python,
-            "-m",
-            "demos.model.server",
-            "--model-type",
-            config.model_type,
-            "--model-path",
-            str(model),
-            "--ref-audio",
-            str(ref),
-            "--memory-minutes",
-            str(config.memory_minutes),
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(config.model_port),
-        ]
-        web_command = [
-            config.web_python,
-            "-m",
-            "demos.server.cli",
-            "--model-type",
-            config.model_type,
-            "--model-server",
-            f"http://127.0.0.1:{config.model_port}",
-            "--tokenizer-path",
-            str(model),
-            "--config",
-            str(config.settings),
-            "--host",
-            config.host,
-            "--port",
-            str(config.web_port),
-        ]
-        if config.demo_path:
-            web_command += ["--demo-config", str(config.demo_path)]
-        print(
-            f"Loading {model_name(config.model_type)}; the web application starts after the model is ready.",
-            flush=True,
-        )
-        StackSupervisor(config, model_command, web_command).run(
-            lambda: show_access(config)
-        )
+            parser.error(f"Another launcher owns the {args.role} service in this checkout")
+        StackSupervisor(runtime, args.role, command, health_url, args.startup_timeout, info).run(show)
 
 
 def main(argv=None):

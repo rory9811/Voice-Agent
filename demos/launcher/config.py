@@ -1,11 +1,9 @@
-"""Resolve portable deployment settings and validate local checkpoint assets."""
+"""Validate checkpoint assets and listening ports for the launcher."""
 
 from __future__ import annotations
 
 import json
-import os
 import socket
-from dataclasses import dataclass
 from pathlib import Path
 from demos.variants import model_name
 
@@ -63,46 +61,13 @@ def checkpoint_directory(path: Path, model_type: str | None = None) -> Path:
     return path
 
 
-def ensure_ports_available(host: str, ports: tuple[int, ...]) -> None:
-    if len(set(ports)) != len(ports):
-        raise ValueError("Model and web ports must be different")
-    for port in ports:
-        if not 0 < port < 65536:
-            raise ValueError(f"Invalid port: {port}")
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-            try:
-                listener.bind((host, port))
-            except OSError as exc:
-                raise ValueError(
-                    f"Port {host}:{port} is occupied or unavailable; choose another port"
-                ) from exc
-
-
-@dataclass(frozen=True)
-class LaunchConfig:
-    root: Path
-    model_path: Path
-    ref_audio: Path
-    model_python: str
-    web_python: str
-    host: str = "127.0.0.1"
-    model_port: int = 8031
-    web_port: int = 8032
-    memory_minutes: int = 40
-    startup_timeout: float = 600
-    model_type: str = "omni"
-    harness_path: Path | None = None
-    demo_path: Path | None = None
-
-    @property
-    def runtime(self) -> Path:
-        return self.root / "runtime"
-
-    @property
-    def settings(self) -> Path:
-        if self.harness_path is not None:
-            return self.harness_path
-        explicit = os.getenv("HARNESS_CONFIG")
-        if explicit:
-            return (self.root / Path(explicit).expanduser()).resolve()
-        return self.runtime / "harness.json"
+def ensure_port_available(host: str, port: int) -> None:
+    if not 0 < port < 65536:
+        raise ValueError(f"Invalid port: {port}")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        try:
+            listener.bind((host, port))
+        except OSError as exc:
+            raise ValueError(
+                f"Port {host}:{port} is occupied or unavailable; choose another port"
+            ) from exc

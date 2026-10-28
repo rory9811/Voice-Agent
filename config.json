@@ -1,10 +1,6 @@
 {
   "model": {
-    "type": "video",
-    "path": "Realtime-Venus-Omni",
-    "reference_audio": "",
-    "port": 8031,
-    "memory_minutes": 40,
+    "url": "http://127.0.0.1:8031",
     "length_penalty": 0.8,
     "timeout_s": 180
   },
