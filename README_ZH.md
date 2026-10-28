@@ -90,10 +90,13 @@ python -m pip install -r Realtime-Venus-Omni/requirements.txt
 python -m pip install -r requirements.txt
 ```
 
-网页体验在 Linux 上运行安装脚本，自动创建独立的 Python 3.11/3.12 环境，并安装模型、网页服务和 Harness 的依赖：
+网页体验分两台机器部署：模型装在带 NVIDIA GPU 的 Linux 服务器上，网页服务、Harness 与 Codex 装在你自己的电脑上（macOS 或 Linux）。安装脚本按角色创建独立的 Python 3.11/3.12 环境：
 
 ```bash
-bash install.sh
+# GPU 服务器：模型依赖（torch 等）
+bash install.sh model
+# 本地电脑：网页服务、Harness、tokenizer 与 Codex（不含 torch）
+bash install.sh web
 ```
 
 安装后，按需选择下面的离线推理或在线体验。
@@ -147,23 +150,29 @@ python frontend/Realtime-Venus-Audio/audio_duplex_chat.py \
 
 ### 3. 与 Realtime-Venus 实时对话
 
-在线 Duplex Demo 需要**至少一张 NVIDIA A100 GPU**。在根目录 [`config.json`](config.json) 配置前端模型，在 [`harness/config.json`](harness/config.json) 配置任务执行；Demo 通过 `harness.config` 引用 Harness 配置。
+模型跑在 GPU 服务器上（**至少一张 NVIDIA A100**），网页服务、Harness 与 Codex 跑在本地电脑上，两者通过 SSH 隧道连接。
 
-按 [Demo 配置说明](demos/README_ZH.md#两份配置文件)和 [Harness 配置说明](harness/README_ZH.md#配置文件)填写后启动：
-
-```bash
-bash start.sh --config config.json
-```
-
-`model.type` 选择 `audio` 时提供麦克风和音频上传，选择 `video`（也接受 `omni`）时提供摄像头加麦克风和视频上传。将 `model.path` 指向对应的完整权重。若提示则完成 Codex 登录；模型与网页的默认端口分别为 **8031** 和 **8032**。
-
-在本地电脑保持以下隧道运行，将 `user@server` 替换为自己的 SSH 登录地址：
+**① 服务器：启动模型。** 编辑 [`model_server.json`](model_server.json)：`type` 选 `audio`（麦克风、音频上传）或 `video`（也接受 `omni`；摄像头加麦克风、视频上传），`path` 指向对应的完整权重。然后运行：
 
 ```bash
-ssh -N -L 8032:127.0.0.1:8032 user@server
+bash start.sh model --detach
 ```
 
-打开 [http://localhost:8032](http://localhost:8032)，完成 Settings 后开始对话。服务管理详见 [Demo 文档](demos/README_ZH.md)。
+模型 API 只监听服务器的 `127.0.0.1:8031`，不对外暴露。
+
+**② 本地：建立隧道。** 保持以下命令运行，将 `user@server` 替换为自己的 SSH 登录地址：
+
+```bash
+ssh -N -L 8031:127.0.0.1:8031 user@server
+```
+
+**③ 本地：启动网页。** 根目录 [`config.json`](config.json) 的 `model.url` 默认就是隧道地址 `http://127.0.0.1:8031`。在 [`harness/config.json`](harness/config.json) 配置任务执行（见 [Harness 配置说明](harness/README_ZH.md#配置文件)），然后运行：
+
+```bash
+bash start.sh web
+```
+
+若提示则完成 Codex 登录。网页服务启动时从模型服务读取模型类型和 tokenizer，本地不需要权重。打开 [http://localhost:8032](http://localhost:8032)，完成 Settings 后开始对话。配置与服务管理详见 [Demo 文档](demos/README_ZH.md)。
 
 ### 4. Android 演示应用（Beta）
 
@@ -192,13 +201,14 @@ Realtime-Venus/
 │   ├── launcher/           # 配置校验与进程管理
 │   ├── settings.py         # 任务及模型偏好配置
 │   ├── install.py          # 独立环境安装
-│   └── requirements.txt    # 模型与应用依赖
+│   └── requirements-*.txt  # 模型服务 / 网页服务依赖
 ├── assets/                 # 论文图片、报告与 Demo 截图
 ├── download_models.py      # 读取 HF 清单，下载 Omni、Audio 或两者
 ├── pyproject.toml          # Harness 独立打包配置
 ├── requirements.txt        # 推理示例共用的依赖入口
-├── config.json             # 前端模型、网页服务与 Harness 配置路径
-└── install.sh / start.sh    # Demo 安装、启动、状态查询与停止
+├── model_server.json       # 模型服务配置（GPU 服务器）
+├── config.json             # 网页服务：模型地址、Harness 配置路径、端口（本地电脑）
+└── install.sh / start.sh    # 按角色（model / web）安装、启动、查询与停止
 ```
 
 ## 引用

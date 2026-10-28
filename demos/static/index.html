@@ -390,16 +390,16 @@
         <ul id="settings-issues"></ul>
       </section>
       <section id="codex-login-panel" class="settings-guidance">
-        <strong data-i18n="codexLoginTitle">Codex login on the server</strong>
+        <strong data-i18n="codexLoginTitle">Codex login on this computer</strong>
         <p id="codex-login-status" role="status"></p>
-        <p id="codex-login-help" data-i18n="codexLoginHelp" hidden>On the server, run codex login --device-auth using your configured Codex executable, complete login, then recheck here.</p>
+        <p id="codex-login-help" data-i18n="codexLoginHelp" hidden>On this computer, run codex login --device-auth using your configured Codex executable, complete login, then recheck here.</p>
         <button id="recheck-codex" type="button" class="secondary-button" data-i18n="codexRecheck">Recheck login</button>
       </section>
       <form id="settings-form" novalidate>
         <label><span data-i18n="workspace">Task workspace</span>
           <input id="backend-workspace" required autocomplete="off" spellcheck="false" aria-describedby="workspace-hint" />
         </label>
-        <p id="workspace-hint" class="field-hint" data-i18n="workspaceHint">Required. Choose a task directory on the server; relative paths are resolved from the settings file’s directory.</p>
+        <p id="workspace-hint" class="field-hint" data-i18n="workspaceHint">Required. Choose a task directory on this computer; relative paths are resolved from the settings file’s directory.</p>
 
         <fieldset>
           <legend data-i18n="devices">Your devices</legend>
@@ -454,7 +454,7 @@
             ><svg class="icon"><use href="#i-chevron" /></svg>
           </summary>
           <p class="field-hint" data-i18n="backendHint">
-            Background tasks use the server’s existing Codex connection.
+            Background tasks use this computer’s existing Codex connection.
           </p>
           <label
             ><span data-i18n="backendModel">Backend model</span
@@ -465,7 +465,7 @@
           ><label
             ><span data-i18n="backendEffort">Task reasoning effort</span
             ><select id="backend-effort">
-              <option value="" data-i18n="effortDefault">Server default</option>
+              <option value="" data-i18n="effortDefault">Codex default</option>
               <option value="minimal" data-i18n="effortMinimal">Minimal</option>
               <option value="low" data-i18n="effortLow">Low · faster</option>
               <option value="medium" data-i18n="effortMedium">Medium</option>
@@ -551,7 +551,7 @@
             <label><span>Gemini API Key</span>
               <input id="gemini-key" type="password" autocomplete="new-password" spellcheck="false" /></label>
             <p id="gemini-key-status" class="field-hint"></p>
-            <p class="field-hint" data-i18n="geminiKeyHint">Leave blank to keep the saved key or use GEMINI_API_KEY / GOOGLE_API_KEY on the server. Saved keys are never returned to the browser.</p>
+            <p class="field-hint" data-i18n="geminiKeyHint">Leave blank to keep the saved key or use GEMINI_API_KEY / GOOGLE_API_KEY on this computer. Saved keys are never returned to the browser.</p>
           </fieldset>
           <p class="field-hint" data-i18n="effortHint">Save and start a new conversation to apply changes.</p>
           <label

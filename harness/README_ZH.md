@@ -117,7 +117,7 @@ python -m pip install -e .
 
 配置方法：
 
-1. `workspace` 填任务文件的工作目录。`codex.command` 默认为 `["codex", "app-server"]`；若 Codex 不在 PATH 中，将第一项改为可执行文件的路径，并在服务器完成 Codex 登录。
+1. `workspace` 填任务文件的工作目录。`codex.command` 默认为 `["codex", "app-server"]`；若 Codex 不在 PATH 中，将第一项改为可执行文件的路径，并在运行 Harness 的机器上完成 Codex 登录。
 2. `routing.mode` 默认为 `general`，委托直接交给 Codex；设置为 `auto` 才启用路由和 multimodal 能力选择。
 3. 在 `routing`、`responses`（Polish）、`multimodal` 中分别设置 `provider`（`codex` 或 `gemini`）、`model` 和 `timeout_s`。Codex 的 `effort` 默认 `low`；Gemini 不使用该参数。General 任务执行器仍由 `codex` 配置。
 4. 使用 Gemini 时填写 `gemini.api_key`，或设置 `GEMINI_API_KEY` / `GOOGLE_API_KEY` 环境变量；`gemini.model` 为该 provider 的默认模型。

@@ -117,7 +117,7 @@ Edit [`config.json`](config.json) directly and set your own `workspace`. Codex a
 
 Configuration steps:
 
-1. Set `workspace` to the task files directory. `codex.command` defaults to `["codex", "app-server"]`; replace its first item with the executable path if Codex is not on PATH, and complete Codex login on the server.
+1. Set `workspace` to the task files directory. `codex.command` defaults to `["codex", "app-server"]`; replace its first item with the executable path if Codex is not on PATH, and complete Codex login on the machine that runs Harness.
 2. `routing.mode` defaults to `general`, sending delegates directly to Codex. Choose `auto` to enable routing and multimodal capability selection.
 3. In `routing`, `responses` (Polish) and `multimodal`, independently set `provider` (`codex` or `gemini`), `model` and `timeout_s`. Codex `effort` defaults to `low`; Gemini does not use it. The General task executor is still configured under `codex`.
 4. For Gemini, set `gemini.api_key` or the `GEMINI_API_KEY` / `GOOGLE_API_KEY` environment variable. `gemini.model` is the provider’s default model.

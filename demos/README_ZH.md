@@ -21,13 +21,15 @@
 | Harness + Codex | 嵌入网页服务，执行任务、跟踪进度并回传结果。 | [`server/resources.py`](server/resources.py)、[Harness](../harness/README_ZH.md#架构) |
 | 启动与配置 | 环境安装、进程管理、配置持久化。 | [`launcher/`](launcher/)、[`install.py`](install.py)、[`settings.py`](settings.py) |
 
+模型服务跑在 GPU 服务器上，其余组件都跑在你的电脑上，经 SSH 隧道访问模型。
+
 <p align="center"><img src="../assets/experience-zh.png" width="100%" alt="Realtime-Venus 网页体验界面" /><br /><sub>浏览器统一承载实时媒体、任务进度和结果下载。</sub></p>
 
 ## 准备
 
-使用配备 NVIDIA CUDA GPU 和可用驱动的 Linux 服务器。按[主 README](../README_ZH.md)下载所选模式的完整权重，保留模型代码、tokenizer、参考音频及语音资产。默认下载目录为 `Realtime-Venus-Omni/` 或 `Realtime-Venus-Audio/`，将 `model.path` 指向对应目录。
+**GPU 服务器（模型）。** 使用配备 NVIDIA CUDA GPU 和可用驱动的 Linux 服务器。按[主 README](../README_ZH.md)在服务器上下载所选模式的完整权重，保留模型代码、tokenizer、参考音频及语音资产。默认下载目录为 `Realtime-Venus-Omni/` 或 `Realtime-Venus-Audio/`，将 `model_server.json` 的 `path` 指向对应目录。
 
-Codex 后端需要网络和可用登录。安装器复用已有 Codex 或补齐安装，首次启动时按提示登录。
+**你的电脑（网页服务、Harness、Codex）。** macOS 或 Linux，不需要 GPU 和权重——tokenizer 从模型服务读取。Codex 后端需要网络和可用登录；网页端安装器复用已有 Codex 或补齐安装，首次启动时按提示登录。
 
 <details>
 <summary>权重目录示例</summary>
@@ -52,21 +54,33 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 
 ## 启动
 
-直接编辑仓库根目录的 [`config.json`](../config.json)，配置前端模型，并通过 `harness.config` 指向已配置好的 Harness 文件。具体步骤见下方[两份配置文件](#两份配置文件)，Harness 参数详见 [Harness README](../harness/README_ZH.md#配置文件)。
+在仓库根目录、在各自的机器上各运行一次安装器。
 
-首次使用先在仓库根目录运行 `bash install.sh`，完成配置后启动：
+1. **GPU 服务器：** `bash install.sh model`，编辑 [`model_server.json`](../model_server.json)（见下方[配置文件](#配置文件)），然后启动模型：
 
-```bash
-bash start.sh --config config.json
-```
+   ```bash
+   bash start.sh model --detach
+   ```
+
+   模型 API 只监听服务器的 `127.0.0.1:8031`。
+
+2. **你的电脑：** 保持以下隧道运行，将 `user@server` 换成你的 SSH 登录地址：
+
+   ```bash
+   ssh -N -L 8031:127.0.0.1:8031 user@server
+   ```
+
+3. **你的电脑：** `bash install.sh web`，在根目录 [`config.json`](../config.json) 中把 `harness.config` 指向已配置好的 Harness 文件（见 [Harness README](../harness/README_ZH.md#配置文件)），然后启动网页服务：
+
+   ```bash
+   bash start.sh web
+   ```
+
+   如果连不上模型服务，会直接报错并打印需要运行的隧道命令。
+
+同机部署时在同一台机器上运行这两个角色即可，`model.url` 保持 `http://127.0.0.1:8031`，不需要隧道。
 
 ## 在本地电脑打开
-
-在**本地电脑的终端**中保持以下隧道运行，将 `user@server` 换成你的 SSH 登录地址：
-
-```bash
-ssh -N -L 8032:127.0.0.1:8032 user@server
-```
 
 打开 **[http://localhost:8032](http://localhost:8032)**，开始会话。
 
@@ -78,22 +92,42 @@ ssh -N -L 8032:127.0.0.1:8032 user@server
 
 侧边任务面板支持查看进度、取消任务和下载产物。
 
-服务同一时间支持**一个活跃会话**，默认只监听回环地址。SSH 转发提供浏览器信任的 `localhost` 来源；直接通过服务器 IP 使用摄像头／麦克风需要 HTTPS。若服务器网页端口改为 `9032`，转发参数相应改为 `-L 8032:127.0.0.1:9032`。
+模型同一时间支持**一个活跃会话**。如果网页服务没来得及关闭会话就退出（崩溃、断网），模型在 15 秒内收不到请求后会释放这个名额。网页服务监听本机回环地址，浏览器信任它使用摄像头／麦克风；改成其他 `web.host` 时需要 HTTPS。
+
+**延迟。** 对话中每秒约有 3 次依次进行的模型请求，外加 1 次输出拉取，全部经过隧道。往返延迟约 100 ms 以内时体验接近同机部署；超过约 200 ms 时回复会变慢，输入可能积压。可在本地用 `curl -s -o /dev/null -w '%{time_total}\n' 127.0.0.1:8031/healthz` 测量。
 
 ## 配置
 
-### 两份配置文件
+### 配置文件
 
-**Demo 配置**（根目录 `config.json`）只配置前端模型、网页服务和 Harness 配置路径：
+**模型服务**（`model_server.json`，在 GPU 服务器上）：
+
+```json
+{
+  "type": "video",
+  "path": "Realtime-Venus-Omni",
+  "reference_audio": "",
+  "port": 8031,
+  "memory_minutes": 40,
+  "startup_timeout": 600
+}
+```
+
+| 字段 | 默认值 | 作用 |
+| --- | --- | --- |
+| `type` | `omni` | `video`（也接受 `omni`）提供摄像头与麦克风、上传视频；`audio` 提供麦克风、上传音频。 |
+| `path` | — | 对应的完整权重目录，或包含两种权重子目录的 Hugging Face 下载目录。两种模式使用独立权重。 |
+| `reference_audio` | 权重自带音色 | 参考音色文件；留空使用权重的 `assets/HT_ref_audio.wav`。 |
+| `port` | `8031` | 模型 API 在服务器回环地址上的端口。 |
+| `memory_minutes` | `40` | Omni 视频记忆时长（分钟）；Audio 不使用。 |
+| `startup_timeout` | `600` | 等待模型加载的秒数。 |
+
+**网页服务**（根目录 `config.json`，在你的电脑上）：
 
 ```json
 {
   "model": {
-    "type": "video",
-    "path": "Realtime-Venus-Omni",
-    "reference_audio": "",
-    "port": 8031,
-    "memory_minutes": 40,
+    "url": "http://127.0.0.1:8031",
     "length_penalty": 0.8,
     "timeout_s": 180
   },
@@ -108,38 +142,30 @@ ssh -N -L 8032:127.0.0.1:8032 user@server
 }
 ```
 
-配置步骤：
-
-1. 选择 `model.type`：`video`（也接受 `omni`）提供摄像头与麦克风、上传视频；`audio` 提供麦克风、上传音频。
-2. 将 `model.path` 填为对应的完整权重目录，或包含两种权重子目录的 Hugging Face 下载目录。两种模式使用独立权重。
-3. `model.reference_audio` 填参考音色文件路径；留空使用权重自带的默认音色。
-4. 将 `harness.config` 指向自己的 Harness 配置，并按 Harness README 填写任务目录、组件模型和等待时长。默认指向 `harness/config.json`。
-5. 按需调整下列运行参数，保存后启动。
-
 | 字段 | 默认值 | 作用 |
 | --- | --- | --- |
-| `model.port` | `8031` | 模型 API 端口。 |
-| `model.memory_minutes` | `40` | Omni 视频记忆时长（分钟）；Audio 不使用。 |
-| `model.length_penalty` | `0.8` | 发言长度参数，范围 0.1–5；越小越倾向于提前结束发言。 |
-| `model.timeout_s` | `180` | 模型服务请求超时（秒）。 |
+| `model.url` | `http://127.0.0.1:8031` | 模型服务地址，即 SSH 隧道的本地端。启动时从这里读取模型类型和 tokenizer。 |
+| `model.length_penalty` | `0.8` | 发言长度参数，范围 0.1–5；越小越倾向于提前结束发言。每次新会话时发给模型。 |
+| `model.timeout_s` | `180` | 模型请求超时（秒）。 |
+| `harness.config` | —（必填） | 你的 Harness 配置；按其 README 填写任务目录、组件模型和等待时长。 |
 | `web.host` / `web.port` | `127.0.0.1` / `8032` | 网页监听地址与端口。 |
-| `startup_timeout` | `600` | 每个服务的启动等待时间（秒）。 |
+| `startup_timeout` | `600` | 等待网页服务启动的秒数。 |
 
-切换模式时，先运行 `bash start.sh --stop`，修改同一份配置中的 `model.type`、`model.path` 和参考音频，然后重新运行 `bash start.sh --config config.json`。
+切换模式时，先在服务器上运行 `bash start.sh model --stop`，修改 `type`、`path` 和 `reference_audio` 后重新启动模型，再重启网页服务，让它读取新的模型类型。
 
 **Harness 配置**（`harness/config.json`）直接编辑该独立包内的 [配置文件](../harness/config.json)；它包含 Codex、路由、Polish（`responses`）、multimodal、Gemini、任务目录、反馈间隔、执行／排队／结果等待时长及各组件预算。可脱离 Demo 加载；字段说明和独立使用方法见 [Harness 文档](../harness/README_ZH.md#配置文件)。
 
-所有配置文件中的相对路径均以各自文件所在目录为准；`--config` 及命令行／环境变量路径以执行命令时的目录为准。`model.reference_audio` 留空使用所选权重的 `assets/HT_ref_audio.wav`；`model.memory_minutes` 仅影响 Omni 视频记忆，`model.timeout_s` 控制模型服务请求超时，`startup_timeout` 是每个服务的启动等待秒数。配置文件不含权重。
+所有配置文件中的相对路径均以各自文件所在目录为准；`--config` 及命令行／环境变量路径以执行命令时的目录为准。配置文件不含权重。
 
-优先级为 **命令行 → 环境变量 → 配置文件 → 默认值**。`--harness-config` 或 `HARNESS_CONFIG` 可以覆盖引用；模型相关变量仍支持 `VENUS_MODEL_TYPE`、`MODEL_PATH`、`AUDIO_MODEL_PATH` / `OMNI_MODEL_PATH`、`REF_AUDIO`、`VENUS_MODEL_PORT`、`VENUS_MEMORY_MINUTES`，网页支持 `VENUS_WEB_HOST`、`VENUS_WEB_PORT`，启动等待支持 `VENUS_STARTUP_TIMEOUT`。
+优先级为 **命令行 → 环境变量 → 配置文件 → 默认值**。模型角色：`--type`、`--model-path`、`--ref-audio`、`--port`、`--memory-minutes`；环境变量 `VENUS_MODEL_TYPE`、`MODEL_PATH`、`AUDIO_MODEL_PATH` / `OMNI_MODEL_PATH`、`REF_AUDIO`、`VENUS_MODEL_PORT`、`VENUS_MEMORY_MINUTES`。网页角色：`--model-url`、`--harness-config`、`--host`、`--port`；环境变量 `VENUS_MODEL_URL`、`HARNESS_CONFIG`、`VENUS_WEB_HOST`、`VENUS_WEB_PORT`。两者都支持 `--startup-timeout` / `VENUS_STARTUP_TIMEOUT`。
 
-不传 `--config` 时继续读取仓库根目录 `config.json`；旧的扁平格式及 `runtime/harness.json` 仍可使用。新格式中必须填写 `harness.config`，引用的文件必须存在。错别字、非法数值或缺失资产会明确报错；`--stop` / `--status` 不依赖配置文件可读。切换模型或服务端口后需要重启。
+不传 `--config` 时，模型角色读取仓库根目录 `model_server.json`，网页角色读取根目录 `config.json`（存在时）。网页角色必须通过 `harness.config` 引用一个已存在的文件。错别字、非法数值或缺失资产会明确报错；`--stop` / `--status` 不依赖配置文件可读。切换模型或服务端口后需要重启。
 
 ### 网页设置
 
-任务工作目录默认留空，用户需在 Settings 中填写服务器上的任务目录后才能开始体验；相对路径以配置文件所在目录为基准。保存后再次打开 Settings 会显示用户自己配置的路径。开源发布时不要打包 `runtime/` 或任务目录，它们包含本地配置、密钥、日志及任务文件。设置未完成时，选择语音、摄像头或视频会提示先完成 Settings；只检查当前选择的提供方所需配置。
+任务工作目录默认留空，用户需在 Settings 中填写本机的任务目录后才能开始体验；相对路径以配置文件所在目录为基准。保存后再次打开 Settings 会显示用户自己配置的路径。开源发布时不要打包 `runtime/` 或任务目录，它们包含本地配置、密钥、日志及任务文件。设置未完成时，选择语音、摄像头或视频会提示先完成 Settings；只检查当前选择的提供方所需配置。
 
-开始对话前，网页和服务端 WebSocket 入口都会通过 `codex login status` 检查服务器上的 Codex 登录状态。Settings 会显示结果，并提供登录后的重新检查按钮。未登录、检查失败或超过 5 秒超时都会阻止新会话，仍可保存配置。该检查确认 CLI 本地登录状态，不代表额度或远端服务可用性检查。
+开始对话前，网页和服务端 WebSocket 入口都会通过 `codex login status` 检查本机的 Codex 登录状态。Settings 会显示结果，并提供登录后的重新检查按钮。未登录、检查失败或超过 5 秒超时都会阻止新会话，仍可保存配置。该检查确认 CLI 本地登录状态，不代表额度或远端服务可用性检查。
 
 主动播报任务进度默认关闭。在网页设置的“你的对话”中选择“开启：我同意接收语音进度反馈”，保存并开启新对话后生效；有新进展时才用一句话播报。关闭不影响任务执行、完成结果或主动询问进度。对应配置为 `feedback.proactive_progress`（布尔值，默认 `false`），保存在 `harness.config` 指向的文件；当前设置由此服务的用户共享。
 
@@ -148,13 +174,13 @@ ssh -N -L 8032:127.0.0.1:8032 user@server
 | 设置项 | 默认值 | 作用 |
 | --- | --- | --- |
 | **任务模式** | General | 每个委托直接交给执行器，不调用路由模型。选择 Auto 后启用自动能力选择及任务续接。 |
-| **任务执行** | 服务器模型、`low` 强度 | 控制后台任务执行器。 |
+| **任务执行** | Codex 默认模型、`low` 强度 | 控制后台任务执行器。 |
 | **Auto 路由** | 任务模型、`low`、30 秒 | 仅在 Auto 模式下使用。路由超时会终止该请求，不启动执行器。 |
 | **Polish 进度／结果整理** | Codex、任务模型、`low` | 可独立选择官方 Gemini；仍最多三句话。 |
 | **Multimodal** | Codex、任务模型、`low` | Auto 路由选择该能力时负责直接问答和多模态理解，可独立选择官方 Gemini。 |
 | **发言长度** | `length_penalty = 0.8` | 小于 1 更倾向提前结束发言；1 保持原行为；大于 1 更倾向长发言。范围为 0.1–5。 |
 
-Codex 的模型名留空时，依次使用任务模型、服务器默认模型；Gemini 留空时使用下方的默认 Gemini 模型（初始为 `gemini-flash-latest`，可填写固定版本）。推理强度仅适用于 Codex，Gemini 使用其模型默认思考配置。旧配置中共用的直接问答参数会迁移到独立的 Multimodal 设置。
+Codex 的模型名留空时，依次使用任务模型、Codex 默认模型；Gemini 留空时使用下方的默认 Gemini 模型（初始为 `gemini-flash-latest`，可填写固定版本）。推理强度仅适用于 Codex，Gemini 使用其模型默认思考配置。旧配置中共用的直接问答参数会迁移到独立的 Multimodal 设置。
 
 #### 使用官方 Gemini
 
@@ -162,25 +188,32 @@ Codex 的模型名留空时，依次使用任务模型、服务器默认模型�
 2. 分别为 Polish、Auto 路由、Multimodal 选择 Codex 或 Gemini，按需设置各自模型；选择 Gemini 后，该环节的文本或媒体将发送到 Google 官方 API。
 3. 保存并开始新对话。默认任务模式仍为 General、所有提供方仍为 Codex；路由和 Multimodal 只有在 Auto 路径中才会实际使用。General 工具执行器继续使用 Codex，实时 Omni 模型不变。
 
-密钥输入框留空表示保留已有密钥。网页配置接口只返回“已配置”状态；通过网页保存的密钥存于服务器权限为 `0600` 的 `harness.config` 指向的文件，不要提交到代码库。清除已存密钥时将文件中的 `gemini.api_key` 置空，同时检查服务器环境变量。设置由该服务的用户共享。
+密钥输入框留空表示保留已有密钥。网页配置接口只返回“已配置”状态；通过网页保存的密钥存于本机、权限为 `0600` 的 `harness.config` 指向的文件，不要提交到代码库。清除已存密钥时将文件中的 `gemini.api_key` 置空，同时检查本机环境变量。设置由该服务的用户共享。
 
 实现固定调用 Google 的 [GenerateContent 官方接口](https://ai.google.dev/api/generate-content)，不接受自定义中转地址，不自动切换到其他提供方。Gemini 多模态输入使用委托时冻结的音频、视频片段或图像；内联请求超过 20 MB 会明确报错，需要缩短媒体窗口。实际可用模型、配额和地区由 API Key 所属项目决定。
 
 ## 服务管理
 
 ```bash
-bash start.sh --config config.json --check --no-login  # 当前仓库服务停止时，检查启动条件
-bash start.sh --config config.json --detach           # 后台启动，待服务就绪后返回
-bash start.sh --status
-bash start.sh --stop
+# GPU 服务器
+bash start.sh model --check            # 不启动，只检查权重、语音资产、端口和 CUDA
+bash start.sh model --detach           # 后台启动，模型就绪后返回
+bash start.sh model --status
+bash start.sh model --stop
+
+# 你的电脑
+bash start.sh web --check --no-login   # 不启动，只检查 Codex、端口和模型是否可达
+bash start.sh web --detach             # 后台启动，就绪后返回
+bash start.sh web --status
+bash start.sh web --stop
 ```
 
-预检查和启动使用同一个 `--config` 文件。每个仓库只管理一套运行中的服务，切换配置前先停止旧服务。`--no-login` 会直接报告未登录状态，不发起登录流程。前台运行时，Ctrl+C 会停止两个服务。
+每个仓库每个角色只管理一个运行中的服务，切换配置前先停止旧服务。`--no-login` 会直接报告未登录状态，不发起登录流程。前台运行时，Ctrl+C 停止该角色的服务。
 
 | 运行路径 | 内容 |
 | --- | --- |
-| `runtime/logs/model.log` | 模型加载与推理。 |
-| `runtime/logs/web.log` | 网页连接、上传与会话错误。 |
-| `runtime/logs/stack.log` | 后台启动与进程管理。 |
+| `runtime/logs/model.log` | 模型加载与推理（服务器）。 |
+| `runtime/logs/web.log` | 网页连接、上传与会话错误（你的电脑）。 |
+| `runtime/logs/{model,web}-launcher.log` | 各角色的后台启动与进程管理。 |
 | `harness.config` 指向的文件 | 模型／任务偏好及工作目录配置。 |
 | `runtime/workspace/` | 任务工作区示例（需自行配置）。生成文件在会话结束后仍保留；网页下载链接只在对应会话内有效。 |

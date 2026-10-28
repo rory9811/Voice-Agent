@@ -90,10 +90,13 @@ python -m pip install -r Realtime-Venus-Omni/requirements.txt
 python -m pip install -r requirements.txt
 ```
 
-For the browser demo, run the installer on Linux. It creates an isolated Python 3.11/3.12 environment and installs the model, web service, and Harness dependencies:
+The browser demo runs on two machines: the model on a Linux server with an NVIDIA GPU, and the web service, Harness, and Codex on your own computer (macOS or Linux). The installer creates an isolated Python 3.11/3.12 environment for one role:
 
 ```bash
-bash install.sh
+# GPU server: model dependencies (torch and friends)
+bash install.sh model
+# Your computer: web service, Harness, tokenizer, and Codex (no torch)
+bash install.sh web
 ```
 
 Then choose standalone inference or the online experience below.
@@ -147,23 +150,29 @@ Both scripts accept `--system-prompt` and `--prompt`; see the [Audio guide](fron
 
 ### 3. Talk to Realtime-Venus
 
-The online Duplex demo requires **at least one NVIDIA A100 GPU**. Configure the frontend model in root [`config.json`](config.json), and configure task execution in [`harness/config.json`](harness/config.json). The Demo file references the Harness file through `harness.config`.
+The model runs on a GPU server (**at least one NVIDIA A100**); the web service, Harness, and Codex run on your computer. They connect through an SSH tunnel.
 
-Follow the [Demo configuration guide](demos/README.md#two-configuration-files) and [Harness configuration guide](harness/README.md#configuration-file), then start:
-
-```bash
-bash start.sh --config config.json
-```
-
-Choose `model.type: "audio"` for microphone and audio upload, or `"video"` (also accepts `"omni"`) for camera with microphone and video upload. Set `model.path` to the corresponding downloaded checkpoint. Complete Codex login if prompted; default ports are **8031** for the model and **8032** for the web service.
-
-On your local computer, keep this tunnel open, replacing `user@server` with your SSH login:
+**① Server: start the model.** Edit [`model_server.json`](model_server.json): set `type` to `audio` (microphone and audio upload) or `video` (also accepts `omni`; camera with microphone and video upload), and point `path` at the matching downloaded checkpoint. Then run:
 
 ```bash
-ssh -N -L 8032:127.0.0.1:8032 user@server
+bash start.sh model --detach
 ```
 
-Open [http://localhost:8032](http://localhost:8032), complete Settings and start a conversation. See the [Demo guide](demos/README.md) for service management.
+The model API listens only on the server's `127.0.0.1:8031`; it is never exposed to the network.
+
+**② Your computer: open the tunnel.** Keep this running, replacing `user@server` with your SSH login:
+
+```bash
+ssh -N -L 8031:127.0.0.1:8031 user@server
+```
+
+**③ Your computer: start the web service.** Root [`config.json`](config.json) already points `model.url` at the tunnel (`http://127.0.0.1:8031`). Configure task execution in [`harness/config.json`](harness/config.json) (see the [Harness configuration guide](harness/README.md#configuration-file)), then run:
+
+```bash
+bash start.sh web
+```
+
+Complete Codex login if prompted. At startup the web service reads the model type and tokenizer from the model server, so your computer needs no checkpoint. Open [http://localhost:8032](http://localhost:8032), complete Settings and start a conversation. See the [Demo guide](demos/README.md) for configuration and service management.
 
 ### 4. Android Demo (Beta)
 
@@ -192,13 +201,14 @@ Realtime-Venus/
 │   ├── launcher/           # Configuration and process supervision
 │   ├── settings.py         # Saved task and model preferences
 │   ├── install.py          # Isolated environment installation
-│   └── requirements.txt    # Model and application dependencies
+│   └── requirements-*.txt  # Model server / web service dependencies
 ├── assets/                 # Paper figures, report, and Demo screenshot
 ├── download_models.py      # Download Omni, Audio, or both using the HF manifest
 ├── pyproject.toml          # Standalone Harness package
 ├── requirements.txt        # Shared dependency entry for inference examples
-├── config.json             # Frontend model, web service and Harness config path
-└── install.sh / start.sh    # Install, start, inspect, and stop the Demo
+├── model_server.json       # Model server settings (GPU server)
+├── config.json             # Web service: model URL, Harness config path, port (your computer)
+└── install.sh / start.sh    # Install, start, inspect, and stop the model or web role
 ```
 
 ## Citation
