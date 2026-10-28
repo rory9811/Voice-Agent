@@ -6,7 +6,7 @@ import argparse
 import logging
 import secrets
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +19,7 @@ from demos.model.adapter import (
     OutputTimeout,
     RealtimeVenusOmniAdapter,
 )
+from demos.model.checkpoint import checked_file, checkpoint_directory
 from demos.model.prompts import REALTIME_VENUS_SYSTEM_PROMPT
 from demos.model.settings import TOKEN_ENV, model_token, require_token
 from demos.variants import model_name
@@ -243,7 +244,8 @@ def _parse_args(argv: list[str] | None = None) -> _ServerConfig:
     p.add_argument(
         "--model-path", default=None, help="path to model_weight/ (trust_remote_code)"
     )
-    p.add_argument("--ref-audio", default=None, help="16 kHz reference voice wav")
+    p.add_argument("--ref-audio", default=None,
+                   help="Reference voice wav; relative paths are inside the checkpoint (default: assets/HT_ref_audio.wav)")
     p.add_argument(
         "--prompt-wav", default=None, help="optional prompt_wav_path for token2wav init"
     )
@@ -301,10 +303,24 @@ def _parse_args(argv: list[str] | None = None) -> _ServerConfig:
     )
 
 
+def resolve_assets(config: _ServerConfig) -> _ServerConfig:
+    """Validate the checkpoint and pick its reference voice before loading anything."""
+    if not config.model_path:
+        raise ValueError("Set the model path (--model-path)")
+    model = checkpoint_directory(Path(config.model_path), config.model_type)
+    # A relative reference voice lives inside the checkpoint directory.
+    ref = Path(config.ref_audio_path or "assets/HT_ref_audio.wav")
+    ref = checked_file(ref if ref.is_absolute() else model / ref)
+    return replace(config, model_path=str(model), ref_audio_path=str(ref))
+
+
 def main(argv: list[str] | None = None) -> None:
     import uvicorn
 
-    config = _parse_args(argv)
+    try:
+        config = resolve_assets(_parse_args(argv))
+    except ValueError as exc:
+        raise SystemExit(f"Startup failed: {exc}") from None
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )

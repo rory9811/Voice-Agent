@@ -1,0 +1,7 @@
+# Images contain code only; weights, data and local environments stay out of the build context.
+*
+!demos/
+!harness/
+**/__pycache__
+# Private Harness settings can hold API keys.
+harness/config.local*.json

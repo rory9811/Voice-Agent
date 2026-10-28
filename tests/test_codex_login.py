@@ -50,12 +50,12 @@ class CodexLoginTests(unittest.TestCase):
             path = Path(tmp)/'settings.json'
             save_setup({'workspace':'./tasks', 'responses':{'provider':'gemini'}, 'multimodal':{'provider':'gemini'}, 'routing':{'mode':'auto', 'provider':'gemini'}, 'gemini':{'api_key':'SECRET'}}, path)
             app = create_app(settings_path=path, model_type='omni', tokenizer=None, model_server_url='http://unused')
-            with TestClient(app) as client:
+            with TestClient(app, base_url="http://localhost") as client:
                 self.assertTrue(client.get('/api/status').json()['configured'])
                 run.return_value.returncode = 1
                 self.assertTrue(client.get('/api/status').json()['configured'])
                 with patch('demos.server.app.WebAgentSession') as session:
-                    with client.websocket_connect('/ws') as socket:
+                    with client.websocket_connect('ws://localhost/ws') as socket:
                         self.assertEqual(socket.receive_json()['code'], 'configuration')
                     session.assert_not_called()
                 self.assertFalse(client.get('/api/status?fresh=true').json()['configured'])
@@ -69,7 +69,7 @@ class CodexLoginTests(unittest.TestCase):
     def test_configuration_can_be_saved_while_login_is_pending(self):
         with tempfile.TemporaryDirectory() as tmp, patch('shutil.which', return_value='/bin/codex'), patch('demos.server.codex_login.subprocess.run', return_value=SimpleNamespace(returncode=1)):
             path = Path(tmp)/'settings.json'
-            with TestClient(create_app(settings_path=path, model_type='omni', tokenizer=None, model_server_url='http://unused')) as client:
+            with TestClient(create_app(settings_path=path, model_type="omni", tokenizer=None, model_server_url="http://unused"), base_url="http://localhost") as client:
                 public = client.get('/api/config').json()
                 public['data']['workspace'] = './tasks'
                 result = client.post('/api/config', json=public, headers={'X-Venus-Config-Token':public['token']})
@@ -85,8 +85,8 @@ class CodexLoginTests(unittest.TestCase):
                 save_setup({'workspace':'./different-tasks'}, path)
                 return SimpleNamespace(returncode=0)
             with patch('demos.server.codex_login.subprocess.run', side_effect=change_config), patch('demos.server.app.WebAgentSession') as session:
-                with TestClient(create_app(settings_path=path, model_type='omni', tokenizer=None, model_server_url='http://unused')) as client:
-                    with client.websocket_connect('/ws') as socket:
+                with TestClient(create_app(settings_path=path, model_type="omni", tokenizer=None, model_server_url="http://unused"), base_url="http://localhost") as client:
+                    with client.websocket_connect('ws://localhost/ws') as socket:
                         self.assertEqual(socket.receive_json()['code'], 'configuration')
                 session.assert_not_called()
 
@@ -102,8 +102,8 @@ class CodexLoginTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, patch('shutil.which', return_value='/bin/codex'), patch('demos.server.codex_login.subprocess.run', return_value=SimpleNamespace(returncode=0)), patch('demos.server.app.WebAgentSession', FakeSession):
             path = Path(tmp)/'settings.json'
             save_setup({'workspace':'./tasks'}, path)
-            with TestClient(create_app(settings_path=path, model_type='omni', tokenizer=None, model_server_url='http://unused')) as client:
-                with client.websocket_connect('/ws') as socket:
+            with TestClient(create_app(settings_path=path, model_type="omni", tokenizer=None, model_server_url="http://unused"), base_url="http://localhost") as client:
+                with client.websocket_connect('ws://localhost/ws') as socket:
                     self.assertEqual(socket.receive_json()['type'], 'ready')
 
 
@@ -118,7 +118,7 @@ class NonBlockingLoginTests(unittest.IsolatedAsyncioTestCase):
             path = Path(tmp)/'settings.json'
             save_setup({'workspace':'./tasks'}, path)
             app = create_app(settings_path=path, model_type='omni', tokenizer=None, model_server_url='http://unused')
-            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://localhost') as client:
                 pending = asyncio.create_task(client.get('/api/status?fresh=true'))
                 try:
                     self.assertTrue(await asyncio.to_thread(entered.wait, 1))

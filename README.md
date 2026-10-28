@@ -90,14 +90,7 @@ python -m pip install -r Realtime-Venus-Omni/requirements.txt
 python -m pip install -r requirements.txt
 ```
 
-The browser demo runs on two machines: the model on a Linux server with an NVIDIA GPU, and the web service, Harness, and Codex on your own computer (macOS or Linux). The installer creates an isolated Python 3.11/3.12 environment for one role:
-
-```bash
-# GPU server: model dependencies (torch and friends)
-bash install.sh model
-# Your computer: web service, Harness, tokenizer, and Codex (no torch)
-bash install.sh web
-```
+The browser demo runs as two Docker Compose projects: [`deploy/model`](deploy/model) on a Linux server with an NVIDIA GPU (Docker Engine with the NVIDIA Container Toolkit), and [`deploy/web`](deploy/web) on your own computer (Docker Desktop or Docker Engine). Images are built on the first `docker compose up -d`; nothing else is installed on either machine.
 
 Then choose standalone inference or the online experience below.
 
@@ -150,35 +143,41 @@ Both scripts accept `--system-prompt` and `--prompt`; see the [Audio guide](fron
 
 ### 3. Talk to Realtime-Venus
 
-The model runs on a GPU server (**at least one NVIDIA A100**); the web service, Harness, and Codex run on your computer, which calls the model's HTTP API directly over the network (for example through your company VPN).
+The model runs on a GPU server (**at least one NVIDIA A100**); the web service, Harness, and Codex run on your computer, which calls the model's HTTP API over the network (for example a company VPN). Each side is configured by the `.env` file next to its `compose.yaml`.
 
-**① Both machines: set a shared token.** The model API is protected by one shared secret. Generate it once:
-
-```bash
-python3 -c "import secrets; print(secrets.token_urlsafe(24))"
-```
-
-Set it on the server and on your computer before starting (add the line to `~/.bashrc` or `~/.zshrc` to keep it):
+**① Server: start the model.** In `deploy/model`, copy the template:
 
 ```bash
-export VENUS_MODEL_TOKEN=<the generated token>
+cp .env.example .env
 ```
 
-**② Server: start the model.** Edit [`model_server.json`](model_server.json): set `type` to `audio` (microphone and audio upload) or `video` (also accepts `omni`; camera with microphone and video upload), point `path` at the matching downloaded checkpoint, and set `host` to `0.0.0.0` (or the server's VPN address) so your computer can reach it. Then run:
+In `.env`, set `MODEL_TYPE` (`omni`: camera with microphone and video upload; `audio`: microphone and audio upload), `MODEL_DIR` (the downloaded checkpoint) and `VENUS_MODEL_TOKEN`, a shared secret generated once with `python3 -c "import secrets; print(secrets.token_urlsafe(24))"`. Then start it; the first run builds the image:
 
 ```bash
-bash start.sh model --detach
+docker compose up -d
 ```
 
-The model refuses to listen on a network address without `VENUS_MODEL_TOKEN`. Make sure its port (8031 by default) is reachable from your computer; ask your network administrator if the VPN only allows certain ports.
+`MODEL_PORT` (8031 by default) must be reachable from your computer; ask your network administrator if the VPN only allows certain ports.
 
-**③ Your computer: start the web service.** In root [`config.json`](config.json), set `model.url` to the server's address, for example `http://10.194.99.8:8031`. Configure task execution in [`harness/config.json`](harness/config.json) (see the [Harness configuration guide](harness/README.md#configuration-file)), then run:
+**② Your computer: start the web service.** In `deploy/web`, copy the template:
 
 ```bash
-bash start.sh web
+cp .env.example .env
 ```
 
-Before starting, it checks that the model server is reachable, ready and accepts the token. Complete Codex login if prompted. The web service reads the model type and tokenizer from the model server, so your computer needs no checkpoint. Open [http://localhost:8032](http://localhost:8032), complete Settings and start a conversation. See the [Demo guide](demos/README.md) for configuration and service management.
+Set `MODEL_URL` to the server's address (for example `http://10.194.99.8:8031`) and `VENUS_MODEL_TOKEN` to the same secret, then start it:
+
+```bash
+docker compose up -d
+```
+
+Log in to Codex once inside the container:
+
+```bash
+docker compose exec web codex login --device-auth
+```
+
+Open [http://localhost:8032](http://localhost:8032), complete Settings (for example task workspace `workspace`) and start a conversation. The web service reads the model type and tokenizer from the model server, so your computer needs no checkpoint. See the [Demo guide](demos/README.md) for every setting and for service management.
 
 ### 4. Android Demo (Beta)
 
@@ -204,17 +203,15 @@ Realtime-Venus/
 │   ├── model/              # Checkpoint adapter and model HTTP API
 │   ├── server/             # Web sessions, media, settings, and artifacts
 │   ├── static/             # Browser UI, capture, playback, and logos
-│   ├── launcher/           # Configuration and process supervision
 │   ├── settings.py         # Saved task and model preferences
-│   ├── install.py          # Isolated environment installation
-│   └── requirements-*.txt  # Model server / web service dependencies
+│   └── requirements-*.txt  # Model server / web service image dependencies
 ├── assets/                 # Paper figures, report, and Demo screenshot
 ├── download_models.py      # Download Omni, Audio, or both using the HF manifest
 ├── pyproject.toml          # Standalone Harness package
 ├── requirements.txt        # Shared dependency entry for inference examples
-├── model_server.json       # Model server settings (GPU server)
-├── config.json             # Web service: model URL, Harness config path, port (your computer)
-└── install.sh / start.sh    # Install, start, inspect, and stop the model or web role
+└── deploy/
+    ├── model/              # GPU server: Dockerfile, compose.yaml, .env.example
+    └── web/                # Your computer: Dockerfile, compose.yaml, .env.example
 ```
 
 ## Citation

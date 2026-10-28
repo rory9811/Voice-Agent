@@ -1,0 +1,43 @@
+# Your computer: cp .env.example .env, edit it, then: docker compose up -d
+name: realtime-venus-web
+
+services:
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/web/Dockerfile
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+    image: realtime-venus-web
+    restart: unless-stopped
+    init: true
+    command:
+      - --model-server=${MODEL_URL:?Set MODEL_URL in .env}
+      - --model-timeout=${MODEL_TIMEOUT_S:-180}
+      - --config=/data/harness.json
+      - --host=0.0.0.0
+      - --port=8032
+    environment:
+      VENUS_MODEL_TOKEN: ${VENUS_MODEL_TOKEN:?Set VENUS_MODEL_TOKEN in .env}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    ports:
+      # Loopback only: the page has no login of its own.
+      - "127.0.0.1:${WEB_PORT:-8032}:8032"
+    volumes:
+      # Settings (harness.json), Codex login and task files.
+      - ${DATA_DIR:-./data}:/data
+    # Codex's bubblewrap sandbox must create namespaces and mount /proc,
+    # which Docker's default seccomp profile and masked /proc forbid. The
+    # image runs as a non-root user so these relaxed options cannot reach
+    # /proc/sys or the Docker VM.
+    security_opt:
+      - seccomp=unconfined
+      - systempaths=unconfined
+    healthcheck:
+      # Direct, never through a proxy configured for Docker.
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.build_opener(u.ProxyHandler({})).open('http://127.0.0.1:8032/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 1m

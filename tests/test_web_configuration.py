@@ -19,7 +19,7 @@ class WebConfigurationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, patch('shutil.which', return_value='/bin/codex'), patch.dict(os.environ, {'GEMINI_API_KEY':'','GOOGLE_API_KEY':''}):
             p=Path(tmp)/'harness.json';save_setup({'workspace':'./workspace'},p)
             app=create_app(settings_path=p,model_type='omni', tokenizer=None, model_server_url='http://unused')
-            with TestClient(app) as c:
+            with TestClient(app, base_url="http://localhost") as c:
                 old=c.get('/api/config').json()
                 self.assertEqual(old['data']['routing']['mode'],'general')
                 headers={'X-Venus-Config-Token':old['token']}

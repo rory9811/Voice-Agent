@@ -150,4 +150,4 @@ agent = build_harness(setup)
 
 带 `_s` 的字段单位为秒，`_ms` 为毫秒。参数从文件加载后直接传入组件，Demo 不再用固定值覆盖等待时间。配置文件列出全部受支持字段，未知字段会报错。
 
-网页 Demo 在自己的配置中通过 `"harness": {"config": "harness/config.json"}` 引用本文件；网页 Settings 写回同一个文件。前端音色、模型权重和发言长度属于 Demo 配置。运行时设置、密钥与任务文件不要提交；`save_setup` 使用原子写入和 `0600` 权限。旧网页配置中的 `duplex` 是 Demo 专属字段，迁移到独立 Harness 配置前应移到 Demo 的 `model.length_penalty`。
+网页 Demo 把本文件保存为 `deploy/web/data/harness.json`；网页 Settings 写回同一个文件，并加入 Demo 专属的 `duplex` 段（发言长度）。模型权重和参考音色属于模型服务的 `deploy/model/.env`。运行时设置、密钥与任务文件不要提交；`save_setup` 使用原子写入和 `0600` 权限。把这样的文件当作独立 Harness 配置使用前，先删除其中的 `duplex` 段。

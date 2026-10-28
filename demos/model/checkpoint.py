@@ -1,10 +1,10 @@
-"""Validate checkpoint assets and listening ports for the launcher."""
+"""Validate a downloaded checkpoint before the model server loads it."""
 
 from __future__ import annotations
 
 import json
-import socket
 from pathlib import Path
+
 from demos.variants import model_name
 
 
@@ -59,20 +59,3 @@ def checkpoint_directory(path: Path, model_type: str | None = None) -> Path:
     ]:
         checked_file(path / "assets/token2wav" / name)
     return path
-
-
-def local_url(host: str, port: int, path: str) -> str:
-    """URL this machine uses to reach its own service listening on host:port."""
-    return f"http://{'127.0.0.1' if host == '0.0.0.0' else host}:{port}{path}"
-
-
-def ensure_port_available(host: str, port: int) -> None:
-    if not 0 < port < 65536:
-        raise ValueError(f"Invalid port: {port}")
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        try:
-            listener.bind((host, port))
-        except OSError as exc:
-            raise ValueError(
-                f"Port {host}:{port} is occupied or unavailable; choose another port"
-            ) from exc

@@ -150,4 +150,4 @@ Configuration groups:
 
 Fields ending in `_s` use seconds; `_ms` uses milliseconds. Values are passed to components without Demo overriding wait budgets. The configuration file lists supported fields; unknown fields fail validation.
 
-The Demo references this file with `"harness": {"config": "harness/config.json"}` and its Settings UI writes back to it. Frontend voice, checkpoint and speaking length belong to the Demo file. Keep runtime settings, keys and task files out of source control; `save_setup` uses atomic writes and `0600` permissions. Legacy web files may contain `duplex`; move that Demo-only value to `model.length_penalty` before using a standalone Harness configuration.
+The Demo's web service keeps this file as `deploy/web/data/harness.json`; its Settings UI writes back to it and adds a Demo-only `duplex` section with the speaking length. Checkpoint and reference voice belong to the model server's `deploy/model/.env`. Keep runtime settings, keys and task files out of source control; `save_setup` uses atomic writes and `0600` permissions. Remove the `duplex` section before using such a file as a standalone Harness configuration.

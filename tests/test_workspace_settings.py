@@ -2,14 +2,12 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from demos.server.app import create_app
 from demos.server.configuration import WebConfiguration
 from demos.settings import save_setup, load_setup
-from demos.launcher.cli import setup_backend
 
 
 class WorkspaceSettingsTests(unittest.TestCase):
@@ -52,21 +50,13 @@ class WorkspaceSettingsTests(unittest.TestCase):
             save_setup({'workspace': ''}, path)
             self.assertFalse(config.status())
 
-    def test_launcher_starts_for_setup_without_default_workspace(self):
-        with tempfile.TemporaryDirectory() as tmp, patch('shutil.which', return_value='/bin/codex'), patch('subprocess.run', return_value=SimpleNamespace(returncode=0)), patch.dict(os.environ, {'GENERAL_CODEX_BINARY': '/bin/codex'}):
-            runtime, settings = Path(tmp)/'runtime', Path(tmp)/'runtime/harness.json'
-            setup_backend(settings, None, runtime, False)
-            self.assertEqual(load_setup(settings).data['workspace'], '')
-            self.assertFalse(WebConfiguration(settings).status())
-            self.assertFalse((runtime/'workspace').exists())
-
     def test_incomplete_setup_rejects_session_then_explicit_path_makes_ready(self):
         with tempfile.TemporaryDirectory() as tmp, patch('shutil.which', return_value='/bin/codex'), patch.dict(os.environ, {'GEMINI_API_KEY': '', 'GOOGLE_API_KEY': ''}):
             path = Path(tmp)/'harness.json'
             app = create_app(settings_path=path, model_type='omni', tokenizer=None, model_server_url='http://unused')
-            with TestClient(app) as client:
+            with TestClient(app, base_url="http://localhost") as client:
                 self.assertFalse(client.get('/api/status').json()['configured'])
-                with client.websocket_connect('/ws') as socket:
+                with client.websocket_connect('ws://localhost/ws') as socket:
                     self.assertEqual(socket.receive_json()['code'], 'configuration')
                 public = client.get('/api/config').json()
                 headers = {'X-Venus-Config-Token': public['token']}

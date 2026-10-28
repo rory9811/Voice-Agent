@@ -9,6 +9,16 @@ from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import FileResponse, Response
+
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def local_host(header):
+    # The page has no login; a DNS-rebinding site would otherwise pass as "same origin".
+    try:
+        return urlsplit("//" + (header or "")).hostname in LOCAL_HOSTS
+    except ValueError:
+        return False
 from fastapi.staticfiles import StaticFiles
 
 from .configuration import WebConfiguration
@@ -17,15 +27,21 @@ from .session import WebAgentSession
 from demos.variants import model_name
 
 
-def create_app(*, settings_path, model_type, tokenizer, model_server_url, demo_path=None):
+def create_app(*, settings_path, model_type, tokenizer, model_server_url, model_timeout_s=180.0):
     frontend_model = model_name(model_type)
-    configuration = WebConfiguration(settings_path, demo_path=demo_path)
+    configuration = WebConfiguration(settings_path)
     static = Path(__file__).resolve().parents[1] / "static"
     sessions = {}
     app = FastAPI(
         title="Realtime-Venus", docs_url=None, redoc_url=None, openapi_url=None
     )
     app.mount("/static", StaticFiles(directory=static), name="static")
+
+    @app.middleware("http")
+    async def only_local_hosts(request, call_next):
+        if not local_host(request.headers.get("host")):
+            return Response("Host rejected", status_code=403)
+        return await call_next(request)
 
     def same_origin(request):
         origin = request.headers.get("origin")
@@ -111,6 +127,9 @@ def create_app(*, settings_path, model_type, tokenizer, model_server_url, demo_p
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
+        if not local_host(websocket.headers.get("host")):
+            await websocket.close(code=1008)
+            return
         origin = websocket.headers.get("origin")
         if origin and urlsplit(origin).netloc != websocket.headers.get("host"):
             await websocket.close(code=1008)
@@ -146,7 +165,7 @@ def create_app(*, settings_path, model_type, tokenizer, model_server_url, demo_p
                 server_url=model_server_url,
                 tokenizer=tokenizer,
                 model_type=model_type,
-                demo_path=demo_path,
+                model_timeout_s=model_timeout_s,
             ),
             mode=mode,
             input_source=source,

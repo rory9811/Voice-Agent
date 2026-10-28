@@ -1,4 +1,4 @@
-"""Demo compatibility for legacy files that included frontend duplex settings."""
+"""Web settings file: the Harness settings plus the frontend speaking length (duplex)."""
 import json
 from dataclasses import asdict
 from pathlib import Path

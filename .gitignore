@@ -3,8 +3,8 @@
 .env.*
 !.env.example
 
-# Deployment environments, checkpoints and generated outputs
-/runtime/
+# Checkpoints, container data and generated outputs
+/deploy/web/data/
 /model_weight/
 /Realtime-Venus-Audio/
 /Realtime-Venus-Omni/

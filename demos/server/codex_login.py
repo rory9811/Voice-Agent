@@ -6,7 +6,7 @@ import time
 
 MESSAGES = {
     "logged_in": "Codex is logged in / Codex 已登录",
-    "not_logged_in": "Codex is not logged in. Run codex login --device-auth on this computer, then recheck / Codex 未登录，请在本机运行 codex login --device-auth，然后重新检查",
+    "not_logged_in": "Codex is not logged in. In deploy/web run docker compose exec web codex login --device-auth, then recheck / Codex 未登录，请在 deploy/web 目录运行 docker compose exec web codex login --device-auth，然后重新检查",
     "missing": "Codex executable not found / 找不到 Codex 程序",
     "timeout": "Codex login check timed out. Recheck after confirming Codex works on this computer / Codex 登录检查超时，请确认本机的 Codex 能正常运行后重新检查",
     "error": "Could not verify Codex login. Check Codex on this computer and retry / 无法确认 Codex 登录状态，请检查本机的 Codex 后重试",

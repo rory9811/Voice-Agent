@@ -1,6 +1,4 @@
 import asyncio
-import io
-from contextlib import redirect_stderr
 import json
 import tempfile
 import unittest
@@ -12,9 +10,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import av
 import numpy as np
 from fastapi.testclient import TestClient
-from demos.launcher.config import checkpoint_directory
-from demos.launcher.variants import select_checkpoint
-from demos.launcher.cli import _run, main
 from demos.model.adapter import _load_real_blocking
 from demos.server.app import create_app
 from demos.server.media import audio_buckets
@@ -30,60 +25,6 @@ def checkpoint(path, kind):
 
 
 class ModelModeTests(unittest.TestCase):
-    def test_repository_root_and_sibling_checkpoint_selection(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root=Path(tmp)
-            omni=checkpoint(root/'weights/Realtime-Venus-Omni','realtime_venus_omni')
-            audio=checkpoint(root/'weights/Realtime-Venus-Audio','minicpmo')
-            self.assertEqual(select_checkpoint(root,'audio',configured=str(omni)),audio.resolve())
-            self.assertEqual(select_checkpoint(root,'omni',explicit=str(omni.parent)),omni.resolve())
-            with self.assertRaisesRegex(ValueError,'contains omni weights'):
-                select_checkpoint(root,'audio',explicit=str(omni))
-
-    def test_missing_audio_never_falls_back_to_omni(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root=Path(tmp)
-            omni=checkpoint(root/'model_weight','realtime_venus_omni')
-            with self.assertRaisesRegex(ValueError,'Realtime-Venus-Audio'):
-                select_checkpoint(root,'audio',configured=str(omni))
-
-    def test_model_role_forwards_variant(self):
-        for mode,kind in [('audio','minicpmo'),('omni','realtime_venus_omni')]:
-            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
-                root=Path(tmp);path=checkpoint(root/'weights',kind)
-                with patch.dict('os.environ',{'VENUS_ROOT':tmp}), patch('demos.launcher.cli.subprocess.run'), patch('demos.launcher.cli.ensure_port_available'), patch('demos.launcher.cli.StackSupervisor') as supervisor:
-                    _run(['model','--type',mode,'--model-path',str(path)])
-                    _,name,command,health,_,_=supervisor.call_args.args
-                    self.assertEqual(name,'model')
-                    self.assertIn('demos.model.server',command)
-                    self.assertEqual(command[command.index('--model-type')+1],mode)
-                    self.assertEqual(command[command.index('--host')+1],'127.0.0.1')
-                    self.assertEqual(health,'http://127.0.0.1:8031/healthz')
-
-    def run_model_role(self, host, token):
-        with tempfile.TemporaryDirectory() as tmp:
-            root=Path(tmp);path=checkpoint(root/'weights','realtime_venus_omni')
-            (root/'model_server.json').write_text(json.dumps({'type':'omni','path':'weights','host':host}))
-            with patch.dict('os.environ',{'VENUS_ROOT':tmp,'VENUS_MODEL_TOKEN':token}), patch('demos.launcher.cli.subprocess.run') as run, patch('demos.launcher.cli.ensure_port_available') as ports, patch('demos.launcher.cli.StackSupervisor') as supervisor:
-                main(['model'])
-            return run,ports,supervisor
-
-    def test_model_role_serves_network_host(self):
-        for host,health in [('0.0.0.0','http://127.0.0.1:8031/healthz'),('10.194.99.8','http://10.194.99.8:8031/healthz')]:
-            with self.subTest(host=host):
-                _,ports,supervisor=self.run_model_role(host,'secret')
-                _,_,command,probe,_,_=supervisor.call_args.args
-                self.assertEqual(command[command.index('--host')+1],host)
-                self.assertEqual(probe,health)
-                self.assertEqual(ports.call_args.args,(host,8031))
-
-    def test_model_role_refuses_network_host_without_token(self):
-        err=io.StringIO()
-        with redirect_stderr(err),self.assertRaises(SystemExit) as caught:
-            self.run_model_role('0.0.0.0','')
-        self.assertEqual(caught.exception.code,1)
-        self.assertIn('VENUS_MODEL_TOKEN',err.getvalue())
-
     def test_audio_loader_disables_vision_without_video_memory(self):
         for mode in ['audio','omni']:
             base=MagicMock();base.eval.return_value=base;base.cuda.return_value=base
@@ -104,14 +45,14 @@ class ModelModeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             for mode,wrong in [('audio','omni'),('omni','audio')]:
                 app=create_app(settings_path=Path(tmp)/'settings.json',model_type=mode,tokenizer=None,model_server_url='http://unused')
-                with TestClient(app) as client:
+                with TestClient(app, base_url="http://localhost") as client:
                     result=client.get('/api/status').json()
                     self.assertEqual(result['model_type'],mode)
                     self.assertEqual(result['model'],'Realtime-Venus-'+mode.capitalize())
                     self.assertEqual(result['input_modes'],['audio','audio_file'] if mode=='audio' else ['camera','video'])
-                    with client.websocket_connect('/ws?mode='+wrong) as socket:
+                    with client.websocket_connect('ws://localhost/ws?mode='+wrong) as socket:
                         self.assertEqual(socket.receive_json()['code'],'input_mode')
-                    with client.websocket_connect('/ws?mode='+mode+'&source='+('video' if mode=='audio' else 'audio_file')) as socket:
+                    with client.websocket_connect('ws://localhost/ws?mode='+mode+'&source='+('video' if mode=='audio' else 'audio_file')) as socket:
                         self.assertEqual(socket.receive_json()['code'],'input_mode')
 
 

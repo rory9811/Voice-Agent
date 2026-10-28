@@ -90,14 +90,7 @@ python -m pip install -r Realtime-Venus-Omni/requirements.txt
 python -m pip install -r requirements.txt
 ```
 
-网页体验分两台机器部署：模型装在带 NVIDIA GPU 的 Linux 服务器上，网页服务、Harness 与 Codex 装在你自己的电脑上（macOS 或 Linux）。安装脚本按角色创建独立的 Python 3.11/3.12 环境：
-
-```bash
-# GPU 服务器：模型依赖（torch 等）
-bash install.sh model
-# 本地电脑：网页服务、Harness、tokenizer 与 Codex（不含 torch）
-bash install.sh web
-```
+网页体验是两个 Docker Compose 项目：[`deploy/model`](deploy/model) 部署在带 NVIDIA GPU 的 Linux 服务器上（需要 Docker Engine 和 NVIDIA Container Toolkit），[`deploy/web`](deploy/web) 部署在你自己的电脑上（Docker Desktop 或 Docker Engine）。第一次运行 `docker compose up -d` 时自动构建镜像，两台机器都不需要另外安装环境。
 
 安装后，按需选择下面的离线推理或在线体验。
 
@@ -150,35 +143,41 @@ python frontend/Realtime-Venus-Audio/audio_duplex_chat.py \
 
 ### 3. 与 Realtime-Venus 实时对话
 
-模型跑在 GPU 服务器上（**至少一张 NVIDIA A100**），网页服务、Harness 与 Codex 跑在本地电脑上；本地直接通过网络（例如公司 VPN）调用模型的 HTTP 接口。
+模型跑在 GPU 服务器上（**至少一张 NVIDIA A100**），网页服务、Harness 与 Codex 跑在本地电脑上；本地通过网络（例如公司 VPN）调用模型的 HTTP 接口。两边都用 `compose.yaml` 旁边的 `.env` 文件配置。
 
-**① 两台机器：设置同一个令牌。** 模型接口用一个共享密钥保护。先生成一次：
-
-```bash
-python3 -c "import secrets; print(secrets.token_urlsafe(24))"
-```
-
-在服务器和你的电脑上，启动前都设置它（写进 `~/.bashrc` 或 `~/.zshrc` 可以长期生效）：
+**① 服务器：启动模型。** 在 `deploy/model` 目录复制模板：
 
 ```bash
-export VENUS_MODEL_TOKEN=<生成的令牌>
+cp .env.example .env
 ```
 
-**② 服务器：启动模型。** 编辑 [`model_server.json`](model_server.json)：`type` 选 `audio`（麦克风、音频上传）或 `video`（也接受 `omni`；摄像头加麦克风、视频上传），`path` 指向对应的完整权重，`host` 设为 `0.0.0.0`（或服务器的 VPN 地址），让你的电脑能访问到。然后运行：
+在 `.env` 中设置 `MODEL_TYPE`（`omni`：摄像头加麦克风、视频上传；`audio`：麦克风、音频上传）、`MODEL_DIR`（下载好的权重目录）和 `VENUS_MODEL_TOKEN`（共享密钥，用 `python3 -c "import secrets; print(secrets.token_urlsafe(24))"` 生成一次）。然后启动，第一次会构建镜像：
 
 ```bash
-bash start.sh model --detach
+docker compose up -d
 ```
 
-没有设置 `VENUS_MODEL_TOKEN` 时，模型拒绝监听网络地址。请确认你的电脑能访问它的端口（默认 8031）；如果 VPN 只放行部分端口，请询问网络管理员。
+你的电脑必须能访问 `MODEL_PORT`（默认 8031）；如果 VPN 只放行部分端口，请询问网络管理员。
 
-**③ 本地：启动网页。** 在根目录 [`config.json`](config.json) 中把 `model.url` 设为服务器地址，例如 `http://10.194.99.8:8031`。在 [`harness/config.json`](harness/config.json) 配置任务执行（见 [Harness 配置说明](harness/README_ZH.md#配置文件)），然后运行：
+**② 本地：启动网页。** 在 `deploy/web` 目录复制模板：
 
 ```bash
-bash start.sh web
+cp .env.example .env
 ```
 
-启动前会检查模型服务是否可达、是否就绪、令牌是否正确。若提示则完成 Codex 登录。网页服务从模型服务读取模型类型和 tokenizer，本地不需要权重。打开 [http://localhost:8032](http://localhost:8032)，完成 Settings 后开始对话。配置与服务管理详见 [Demo 文档](demos/README_ZH.md)。
+把 `MODEL_URL` 设为服务器地址（例如 `http://10.194.99.8:8031`），`VENUS_MODEL_TOKEN` 设为同一个密钥，然后启动：
+
+```bash
+docker compose up -d
+```
+
+在容器里登录一次 Codex：
+
+```bash
+docker compose exec web codex login --device-auth
+```
+
+打开 [http://localhost:8032](http://localhost:8032)，完成 Settings（例如任务工作目录填 `workspace`）后开始对话。网页服务从模型服务读取模型类型和 tokenizer，本地不需要权重。所有设置项与服务管理详见 [Demo 文档](demos/README_ZH.md)。
 
 ### 4. Android 演示应用（Beta）
 
@@ -204,17 +203,15 @@ Realtime-Venus/
 │   ├── model/              # 权重适配与模型 HTTP API
 │   ├── server/             # 网页会话、媒体、配置与产物接口
 │   ├── static/             # 网页、采集、播放与 Logo
-│   ├── launcher/           # 配置校验与进程管理
 │   ├── settings.py         # 任务及模型偏好配置
-│   ├── install.py          # 独立环境安装
-│   └── requirements-*.txt  # 模型服务 / 网页服务依赖
+│   └── requirements-*.txt  # 模型服务 / 网页服务镜像依赖
 ├── assets/                 # 论文图片、报告与 Demo 截图
 ├── download_models.py      # 读取 HF 清单，下载 Omni、Audio 或两者
 ├── pyproject.toml          # Harness 独立打包配置
 ├── requirements.txt        # 推理示例共用的依赖入口
-├── model_server.json       # 模型服务配置（GPU 服务器）
-├── config.json             # 网页服务：模型地址、Harness 配置路径、端口（本地电脑）
-└── install.sh / start.sh    # 按角色（model / web）安装、启动、查询与停止
+└── deploy/
+    ├── model/              # GPU 服务器：Dockerfile、compose.yaml、.env.example
+    └── web/                # 本地电脑：Dockerfile、compose.yaml、.env.example
 ```
 
 ## 引用

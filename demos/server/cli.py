@@ -16,8 +16,10 @@ def main():
     parser.add_argument("--port", type=int, default=8032)
     parser.add_argument("--model-server", required=True, help="Model server URL, e.g. http://10.194.99.8:8031")
     parser.add_argument("--config", required=True)
-    parser.add_argument("--demo-config", help="Demo deployment JSON for frontend settings")
+    parser.add_argument("--model-timeout", type=float, default=180.0, help="Model request timeout in seconds")
     args = parser.parse_args()
+    if not 0 < args.model_timeout < float("inf"):
+        parser.error("--model-timeout must be positive")
     try:
         model = fetch_model(args.model_server, model_token())
     except RuntimeError as exc:
@@ -26,10 +28,10 @@ def main():
     uvicorn.run(
         create_app(
             settings_path=args.config,
-            demo_path=args.demo_config,
             model_type=model.model_type,
             tokenizer=model.tokenizer,
             model_server_url=args.model_server,
+            model_timeout_s=args.model_timeout,
         ),
         host=args.host,
         port=args.port,

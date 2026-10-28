@@ -58,7 +58,7 @@ class FetchModelTests(unittest.TestCase):
                     fetch_model("http://10.194.99.8:8031")
                 message = str(caught.exception)
                 self.assertIn("VPN", message)
-                self.assertIn("bash start.sh model", message)
+                self.assertIn("docker compose up -d", message)
                 self.assertNotIn("ssh", message)
 
     def test_fetch_model_sends_token(self):

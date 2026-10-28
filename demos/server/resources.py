@@ -13,7 +13,6 @@ from demos.settings import load_setup
 from demos.variants import model_name
 from harness.bridge.runtime import VenusOmniAgentHarness
 from harness.factory import build_harness
-from demos.deployment import frontend_settings
 
 
 @dataclass
@@ -39,7 +38,7 @@ class ModelInfo:
 def unreachable_message(server_url):
     return (
         f"Cannot reach a ready model server at {server_url}. Check this computer's VPN or "
-        "network connection to the server, and start the model there with `bash start.sh model`."
+        "network connection to the server, and start the model there with `docker compose up -d` in deploy/model."
     )
 
 
@@ -89,18 +88,17 @@ def fetch_model(server_url, token=None, timeout_s=30.0):
     return ModelInfo(health["model_type"], tokenizer)
 
 
-async def real_resources(*, mode, settings_path, server_url, tokenizer, model_type, demo_path=None):
+async def real_resources(*, mode, settings_path, server_url, tokenizer, model_type, model_timeout_s):
     if mode not in {"omni", "audio"}:
         raise ValueError("Unknown input mode")
     setup = load_setup(settings_path)
-    duplex, model_timeout = frontend_settings(demo_path, setup.duplex)
     agent = build_harness(setup)
     return WebResources(
         agent,
         RemoteOmniServingPort(
             server_url,
-            timeout_s=model_timeout,
-            length_penalty=duplex.length_penalty,
+            timeout_s=model_timeout_s,
+            length_penalty=setup.duplex.length_penalty,
             token=model_token(),
         ),
         tokenizer,

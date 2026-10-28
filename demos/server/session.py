@@ -102,7 +102,7 @@ class WebAgentSession:
                 logger.exception("Venus Web session failed")
                 failure = {
                     "type": "fatal_error",
-                    "error": "Venus 会话启动或运行失败，请查看本机 runtime/logs/web.log。",
+                    "error": "Venus 会话启动或运行失败，请在 deploy/web 目录运行 docker compose logs 查看原因。",
                 }
                 if isinstance(exc, RemoteModelUnavailable):
                     failure.update(code=exc.code, error=str(exc))
