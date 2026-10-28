@@ -16,12 +16,16 @@ from .config import LaunchConfig
 
 
 def process_start(pid: int) -> str | None:
-    """Linux process start ticks prevent acting on a recycled PID."""
+    """Process start time (Linux and macOS) prevents acting on a recycled PID."""
     try:
-        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
-        return None if fields[0] == "Z" else fields[19]
-    except (OSError, IndexError):
+        result = subprocess.run(
+            ["ps", "-o", "stat=,lstart=", "-p", str(pid)],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
         return None
+    status, _, started = result.stdout.strip().partition(" ")
+    return None if not started or status.startswith("Z") else started.strip()
 
 
 def read_state(path: Path) -> dict:
