@@ -1,6 +1,6 @@
 import { t, getLanguage, setLanguage } from "./i18n.js?v=20260921-model-modes";
 import { Presence } from "./presence.js";
-import { AudioPlayer, encode } from "./audio.js";
+import { AudioPlayer, encode } from "./audio.js?v=20261029-playback-buffer";
 import { MediaCapture } from "./capture.js";
 import { MicrophoneWaveform } from "./waveform.js?v=20260921-model-modes";
 import { TaskTray } from "./tasks.js?v=20260921-model-modes";

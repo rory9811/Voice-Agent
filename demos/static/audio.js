@@ -40,8 +40,10 @@ export class AudioPlayer {
     onText,
     onActivity,
     onError,
-    bufferSeconds = 1.2,
-    maxWaitMs = 1200,
+    // Lead time before a fresh start; it hides a model step that runs slower
+    // than the previous one (measured p95 minus p50 step time ≈ 0.55 s).
+    bufferSeconds = 0.6,
+    maxWaitMs = 600,
     maxQueuedSeconds = 60,
   }) {
     if (

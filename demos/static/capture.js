@@ -1,5 +1,5 @@
 /** Ordered one-second input units. Slow links drop whole units, never half a pair. */
-import { resample, pcm16 } from "./audio.js";
+import { resample, pcm16 } from "./audio.js?v=20261029-playback-buffer";
 export class MediaCapture {
   constructor(video, { onChunk, onLevel, onEnded, onBackpressure }) {
     Object.assign(this, { video, onChunk, onLevel, onEnded, onBackpressure });
