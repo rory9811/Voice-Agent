@@ -110,8 +110,12 @@ class WebAgentSession:
                     "type": "fatal_error",
                     "error": "Venus 会话启动或运行失败，请在 deploy/web 目录运行 docker compose logs 查看原因。",
                 }
-                if isinstance(exc, RemoteModelUnavailable):
-                    failure.update(code=exc.code, error=str(exc))
+                # A host another caller saw fail on the dead link raises its own error from the port's.
+                cause = exc
+                while cause is not None and not isinstance(cause, RemoteModelUnavailable):
+                    cause = cause.__cause__
+                if cause is not None:
+                    failure.update(code=cause.code, error=str(cause))
                 with suppress(Exception):
                     await self.send(failure)
         finally:

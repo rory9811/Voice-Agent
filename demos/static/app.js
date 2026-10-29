@@ -68,8 +68,10 @@ const capture = new MediaCapture($("preview-video"), {
   onBackpressure: backpressure,
 });
 let toastTimer;
+let toastSticky = false;
 function notify(message, error = false, sticky = false) {
   clearTimeout(toastTimer);
+  toastSticky = sticky;
   $("toast").textContent = message;
   $("toast").classList.toggle("error", error);
   $("toast").hidden = false;
@@ -514,6 +516,8 @@ async function stopSession(notifyServer = true) {
       $("upload-progress").hidden = true;
       previewMedia().pause();
       tasks.end();
+      // A reconnecting notice belongs to the session that just ended.
+      if (toastSticky) $("toast").hidden = true;
       setPhase("idle");
       void refreshStatus();
     }
