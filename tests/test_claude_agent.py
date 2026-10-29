@@ -85,6 +85,8 @@ class ClaudeAgentTests(unittest.IsolatedAsyncioTestCase):
         sandbox = json.loads(argument(argv, "--settings"))["sandbox"]
         self.assertTrue(sandbox["enabled"])
         self.assertTrue(sandbox["failIfUnavailable"])
+        # No per-command dangerouslyDisableSandbox escape.
+        self.assertIs(sandbox["allowUnsandboxedCommands"], False)
         self.assertEqual(sandbox["network"]["allowedDomains"], ["*"])
         self.assertNotIn("--dangerously-skip-permissions", argv)
         context_files = list(self.root.glob("*/inputs/*-context.json"))
@@ -146,6 +148,21 @@ class ClaudeAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(cancelled), 1)
         self.assertIs(cancelled[0]["background_terminals_cleaned"], True)
         self.assertIs(cancelled[0]["process_stopped"], True)
+
+    async def test_cancel_stops_detached_tool_groups(self):
+        provider, log = self.provider([INIT, {"spawn_sleep": 60, "detached": True}, {"sleep": 60}])
+        task = asyncio.create_task(provider.run(self.request(), self.emit))
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            if log.exists() and any("child" in entry for entry in read_log(log)):
+                break
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        child = next(e["child"] for e in read_log(log) if "child" in e)
+        self.assertFalse(pid_alive(child))
+        cancelled = [e.details for e in self.events if e.kind == "cancelled"]
+        self.assertIs(cancelled[0]["background_terminals_cleaned"], True)
 
     def test_build_harness_uses_claude_agent(self):
         data = template()

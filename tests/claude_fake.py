@@ -2,7 +2,8 @@
 
 FAKE_CLAUDE_SCRIPT is a JSON list. Plain objects are printed as stream-json lines; directives:
 {"sleep": seconds}, {"write": {"path": relative path, "text": ...}}, {"spawn_sleep": seconds}
-(a child process in the same process group, its pid logged as "child").
+(a child process, its pid logged as "child"; add "detached": true for its own session, like the
+real CLI's Bash tool, whose commands run under `bwrap --new-session`).
 """
 
 import json
@@ -58,7 +59,8 @@ def main():
         elif "write" in item:
             Path(item["write"]["path"]).write_text(item["write"]["text"])
         elif "spawn_sleep" in item:
-            child = subprocess.Popen(["sleep", str(item["spawn_sleep"])])
+            child = subprocess.Popen(["sleep", str(item["spawn_sleep"])],
+                                     start_new_session=item.get("detached", False))
             _log({"child": child.pid})
         else:
             print(json.dumps(item), flush=True)

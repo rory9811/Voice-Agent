@@ -745,6 +745,9 @@ function updateAgent() {
 }
 $("task-agent").onchange = () => {
   storeAgentFields(state.agent);
+  // Model names belong to one vendor: roles that follow the agent go back to inheriting.
+  for (const role of ["routing", "response", "multimodal"])
+    if ($(`${role}-provider`).value === state.agent) $(`${role}-model`).value = "";
   state.agent = $("task-agent").value;
   loadAgentFields(state.agent);
   updateAgent();
@@ -914,13 +917,12 @@ $("settings-form").onsubmit = async (event) => {
     data.language = $("reply-language").value;
     data.feedback.proactive_progress = $("proactive-progress").value === "true";
     data.duplex.length_penalty = Number($("length-penalty").value);
+    // Routing fields are saved in General mode too: an agent switch rewrites them while hidden.
     data.routing.mode = $("routing-mode").value;
     data.routing.provider = $("routing-provider").value;
-    if (data.routing.mode === "auto") {
-      data.routing.model = $("routing-model").value.trim() || null;
-      data.routing.effort = $("routing-effort").value;
-      data.routing.timeout_s = Number($("routing-timeout").value);
-    }
+    data.routing.model = $("routing-model").value.trim() || null;
+    data.routing.effort = $("routing-effort").value;
+    data.routing.timeout_s = Number($("routing-timeout").value);
     data.responses.provider = $("response-provider").value;
     data.multimodal.provider = $("multimodal-provider").value;
     data.multimodal.model = $("multimodal-model").value.trim() || null;

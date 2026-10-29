@@ -139,7 +139,7 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 
 开始对话前，网页和服务端 WebSocket 入口都会通过 `codex login status` 检查容器内的 Codex 登录状态。Settings 会显示结果；在 `deploy/web` 运行 `docker compose exec web codex login --device-auth` 登录后，可点击重新检查。未登录、检查失败或超过 5 秒超时都会阻止新会话，仍可保存配置。该检查确认 CLI 本地登录状态，不代表额度或远端服务可用性检查。
 
-选择 **任务执行器：Claude Code** 时，改用 `claude auth status` 检查，只有 Claude 订阅登录才算通过（用 `docker compose exec -it web claude auth login` 登录）；API key 登录会显示“不是订阅登录”并阻止新会话。每次运行 Claude Code 都会从环境中删掉 `ANTHROPIC_*`、`CLAUDE_CODE_USE_*` 和 `CLAUDE_CODE_OAUTH_TOKEN`，不加载任何设置文件；CLI 报告的凭据不是订阅登录时拒绝运行，报告正在使用按量付费的额外用量时立即停止。订阅额度用完时任务失败，助手会说明额度不足，不会切换到 Codex 或 API。自己使用自己的订阅没有问题；如果要把这项服务提供给别人用，请先查看 Anthropic 关于订阅登录用于第三方产品的条款。
+选择 **任务执行器：Claude Code** 时，改用 `claude auth status` 检查，只有 Claude 订阅登录才算通过（用 `docker compose exec -it web claude auth login` 登录）；API key 登录会显示“不是订阅登录”并阻止新会话。每次运行 Claude Code 都会从环境中删掉 `ANTHROPIC_*`、`CLAUDE_CODE_USE_*` 和 `CLAUDE_CODE_OAUTH_TOKEN`，不加载任何设置文件；CLI 先确认是订阅登录，否则拒绝运行。**请在 Claude 账号设置里保持“额外用量”（超出订阅额度后按量付费）为关闭状态：** CLI 要等一次请求已经完成才报告它用了额外用量，所以任务只能在第一次这样的请求之后停止，无法在它之前拦下。订阅额度用完时任务失败，助手会说明额度不足，不会切换到 Codex 或 API。自己使用自己的订阅没有问题；如果要把这项服务提供给别人用，请先查看 Anthropic 关于订阅登录用于第三方产品的条款。
 
 主动播报任务进度默认关闭。在网页设置的“你的对话”中选择“开启：我同意接收语音进度反馈”，保存并开启新对话后生效；有新进展时才用一句话播报。关闭不影响任务执行、完成结果或主动询问进度。对应配置为 `feedback.proactive_progress`（布尔值，默认 `false`），保存在 `deploy/web/data/harness.json`；当前设置由此服务的用户共享。
 

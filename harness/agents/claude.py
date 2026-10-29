@@ -150,6 +150,8 @@ class ClaudeAgentProvider(CodexAgentProvider):
         sandbox = {
             "enabled": True,
             "failIfUnavailable": True,
+            # No per-command dangerouslyDisableSandbox escape hatch.
+            "allowUnsandboxedCommands": False,
             "autoAllowBashIfSandboxed": True,
             "network": {"allowedDomains": ["*"] if network else []},
         }

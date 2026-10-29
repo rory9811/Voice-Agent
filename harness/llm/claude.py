@@ -7,13 +7,16 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
 import os
 import signal
+import subprocess
 import tempfile
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
+from pathlib import Path
 
 from harness.core.models import BackendResponse
 
@@ -97,7 +100,7 @@ class CliRun:
             self.process.stdin.write(stdin)
             await self.process.stdin.drain()
             self.process.stdin.close()
-            rejected = False
+            rejected = verified = False
             while line := await self.process.stdout.readline():
                 try:
                     message = json.loads(line)
@@ -112,7 +115,15 @@ class CliRun:
                             f"refusing to run / Claude Code 当前未使用订阅登录（凭据来源：{source}），已拒绝运行",
                             code="authentication_error",
                         )
-                elif kind == "rate_limit_event":
+                    verified = True
+                elif kind != "system" and not verified:
+                    # Fail closed: nothing counts until init has shown the subscription login.
+                    raise ClaudeCliError(
+                        "Claude Code reported no subscription login before working; refusing to run / "
+                        "Claude Code 开始工作前未确认订阅登录，已拒绝运行",
+                        code="authentication_error",
+                    )
+                if kind == "rate_limit_event":
                     info = message.get("rate_limit_info") or {}
                     if info.get("isUsingOverage") is True:
                         raise ClaudeCliError(
@@ -141,34 +152,86 @@ class CliRun:
             drain.cancel()
 
     async def close(self) -> bool:
-        """SIGTERM the whole group, SIGKILL after 3 s; True once no process of it remains."""
+        """SIGTERM every process group the CLI started, SIGKILL after 3 s; True once all are gone.
+
+        Tool commands run detached in their own groups (`bwrap --new-session`), invisible from
+        the CLI's group, so a live CLI is frozen first and its descendants' groups recorded.
+        """
         process = self.process
         if process is None:
             return True
+        groups = {process.pid}
+        frozen = False
+        if process.returncode is None:
+            try:
+                os.kill(process.pid, signal.SIGSTOP)
+                frozen = True
+            except ProcessLookupError:
+                pass
+            groups |= _descendant_groups(process.pid)
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGKILL):
-            try:
-                os.killpg(process.pid, sig)
-            except (ProcessLookupError, PermissionError):
-                break
-            # asyncio reaps the leader meanwhile; tool children are swept with the group.
+            for group in groups:
+                try:
+                    os.killpg(group, sig)
+                except (ProcessLookupError, PermissionError):
+                    pass
+            if frozen:
+                # A stopped CLI handles its SIGTERM (and session shutdown) only once resumed.
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(process.pid, signal.SIGCONT)
             deadline = loop.time() + 3
-            while self._group_alive() and loop.time() < deadline:
+            while _any_alive(groups) and loop.time() < deadline:
                 await asyncio.sleep(0.05)
-            if not self._group_alive():
+            if not _any_alive(groups):
                 break
-        return not self._group_alive()
-
-    def _group_alive(self):
-        try:
-            os.killpg(self.process.pid, 0)
-        except (ProcessLookupError, PermissionError):
-            return False
-        return True
+        return not _any_alive(groups)
 
     async def _drain_stderr(self):
         while line := await self.process.stderr.readline():
             self.stderr_tail.append(line.decode(errors="replace").strip()[:1000])
+
+
+def _any_alive(groups):
+    for group in groups:
+        try:
+            os.killpg(group, 0)
+        except (ProcessLookupError, PermissionError):
+            continue
+        return True
+    return False
+
+
+def _descendant_groups(root):
+    """Process groups of root's live descendants, from /proc (Linux) or ps (macOS)."""
+    parents = {}
+    if Path("/proc/self/stat").exists():
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                stat = (entry / "stat").read_text()
+            except OSError:
+                continue
+            # "pid (comm) state ppid pgrp ..."; comm may itself contain spaces or parentheses.
+            fields = stat[stat.rindex(")") + 2 :].split()
+            parents[int(entry.name)] = (int(fields[1]), int(fields[2]))
+    else:
+        listing = subprocess.run(
+            ["ps", "-A", "-o", "pid=,ppid=,pgid="], capture_output=True, text=True, check=True
+        ).stdout
+        for line in listing.splitlines():
+            pid, ppid, pgid = map(int, line.split())
+            parents[pid] = (ppid, pgid)
+    groups, seen, frontier = set(), {root}, [root]
+    while frontier:
+        parent = frontier.pop()
+        for pid, (ppid, pgid) in parents.items():
+            if ppid == parent and pid not in seen:
+                seen.add(pid)
+                groups.add(pgid)
+                frontier.append(pid)
+    return groups
 
 
 def _result_value(message, rejected):

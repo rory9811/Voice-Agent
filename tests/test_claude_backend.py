@@ -78,6 +78,14 @@ class ClaudeBackendTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(classify_fault(caught.exception).code, "AUTH_FAILED")
         self.assertFalse(pid_alive(read_log(log)[0]["pid"]))
 
+    async def test_missing_init_is_refused(self):
+        # Without a verified init the credential source is unknown: fail closed.
+        backend, _ = self.backend([{"type": "assistant", "message": {"content": []}},
+                                   result({"speech": "好"})])
+        with self.assertRaises(ClaudeCliError) as caught:
+            await backend.complete("x", {})
+        self.assertEqual(classify_fault(caught.exception).code, "AUTH_FAILED")
+
     async def test_overage_is_refused(self):
         backend, log = self.backend([INIT, rate_limit(isUsingOverage=True), {"sleep": 30}])
         with self.assertRaises(ClaudeCliError) as caught:
