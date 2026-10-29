@@ -1,5 +1,5 @@
 # Realtime-Venus web service, Harness and Codex. Built from the repository root by compose.yaml.
-ARG PYTHON_IMAGE=python:3.11-slim
+ARG PYTHON_IMAGE=python:3.11.18-slim-trixie@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438a42ced8bedf60
 FROM ${PYTHON_IMAGE}
 
 ARG PIP_INDEX_URL=https://pypi.org/simple
@@ -26,7 +26,7 @@ open('/usr/local/bin/codex', 'wb').write(archive.extractfile(name).read())" \
 
 WORKDIR /app
 COPY harness/requirements.txt harness/
-COPY demos/requirements-web.txt demos/
+COPY demos/requirements-web.txt demos/constraints-web.txt demos/
 # Downloaded wheels stay in BuildKit's cache, so a rebuild downloads only packages it has not seen.
 RUN --mount=type=cache,target=/root/.cache/pip pip install -r demos/requirements-web.txt
 COPY harness harness

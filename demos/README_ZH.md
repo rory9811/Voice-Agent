@@ -109,7 +109,7 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 | `MEMORY_MINUTES` | `40` | Omni 视频记忆时长（分钟）；Audio 不使用。 |
 | `GPU_DEVICE` | `0` | 使用哪块 GPU。 |
 | `VENUS_MODEL_TOKEN` | —（必填） | 共享密钥；除 `/healthz` 外的每个请求都必须带上它。 |
-| `PYTHON_IMAGE` / `PIP_INDEX_URL` | `python:3.11-slim` / PyPI | 构建用的基础镜像和包索引；需要时改成镜像源。 |
+| `PYTHON_IMAGE` / `PIP_INDEX_URL` | `python:3.11.18-slim-trixie@sha256:6737…` / PyPI | 构建用的基础镜像和包索引；需要时改成镜像源。 |
 
 **网页服务**（`deploy/web/.env`）：
 
@@ -121,7 +121,7 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 | `MODEL_TIMEOUT_S` | `180` | 模型请求超时（秒）。 |
 | `DATA_DIR` | `./data` | 设置（`harness.json`）、Codex 登录（`codex/`）和任务文件。相对路径以 `./` 开头、相对 `deploy/web`。 |
 | `GEMINI_API_KEY` | 空 | 可选的官方 Gemini 密钥，也可以在 Settings 中填写。 |
-| `PYTHON_IMAGE` / `PIP_INDEX_URL` | `python:3.11-slim` / PyPI | 构建用的基础镜像和包索引。 |
+| `PYTHON_IMAGE` / `PIP_INDEX_URL` | `python:3.11.18-slim-trixie@sha256:6737…` / PyPI | 构建用的基础镜像和包索引。 |
 
 修改 `.env` 后，在同一目录运行 `docker compose up -d` 生效。切换模式时，在服务器上修改 `MODEL_TYPE` 和 `MODEL_DIR` 并运行 `docker compose up -d`，再在 `deploy/web` 运行 `docker compose restart`，让网页服务读取新的模型类型。
 

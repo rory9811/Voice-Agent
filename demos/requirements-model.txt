@@ -1,4 +1,8 @@
 # Realtime-Venus model server (GPU host)
+# Exact versions of everything installed, transitive packages included. To change or
+# add a package, delete its line from constraints-model.txt (if any), rebuild on the GPU server,
+# then replace that file with: docker run --rm --entrypoint pip realtime-venus-model freeze --all
+-c constraints-model.txt
 # This compatibility package supplies the checkpoint's speech decoder.
 minicpmo-utils[tts]==1.0.6
 torch==2.4.0

@@ -110,7 +110,7 @@ The model serves **one active conversation**. If the web service stops without c
 | `MEMORY_MINUTES` | `40` | Omni video memory in minutes; unused by Audio. |
 | `GPU_DEVICE` | `0` | GPU index. |
 | `VENUS_MODEL_TOKEN` | — (required) | Shared secret; every request except `/healthz` must carry it. |
-| `PYTHON_IMAGE` / `PIP_INDEX_URL` | `python:3.11-slim` / PyPI | Base image and package index for the build; point them at mirrors if needed. |
+| `PYTHON_IMAGE` / `PIP_INDEX_URL` | `python:3.11.18-slim-trixie@sha256:6737…` / PyPI | Base image and package index for the build; point them at mirrors if needed. |
 
 **Web service** (`deploy/web/.env`):
 
@@ -122,7 +122,7 @@ The model serves **one active conversation**. If the web service stops without c
 | `MODEL_TIMEOUT_S` | `180` | Model request timeout in seconds. |
 | `DATA_DIR` | `./data` | Settings (`harness.json`), Codex login (`codex/`) and task files. Relative paths start with `./` and are relative to `deploy/web`. |
 | `GEMINI_API_KEY` | empty | Optional official Gemini key; it can also be entered in Settings. |
-| `PYTHON_IMAGE` / `PIP_INDEX_URL` | `python:3.11-slim` / PyPI | Base image and package index for the build. |
+| `PYTHON_IMAGE` / `PIP_INDEX_URL` | `python:3.11.18-slim-trixie@sha256:6737…` / PyPI | Base image and package index for the build. |
 
 After editing a `.env`, apply it with `docker compose up -d` in the same folder. To switch modes, change `MODEL_TYPE` and `MODEL_DIR` on the server and run `docker compose up -d` there, then `docker compose restart` in `deploy/web` so the web service reads the new model type.
 
