@@ -36,7 +36,7 @@ To use the optional ModelScope mirror, download Omni directly with its CLI:
 ```bash
 python -m pip install modelscope
 modelscope download --model inclusionAI/Realtime-Venus --local_dir . \
-  --include "Realtime-Venus-Omni/*"
+  --include config.yaml "Realtime-Venus-Omni/*"
 ```
 
 After downloading, install the model dependencies:

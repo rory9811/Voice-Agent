@@ -27,7 +27,7 @@
 
 ## 准备
 
-**GPU 服务器（模型）。** 配备 NVIDIA CUDA GPU 和可用驱动的 Linux 服务器，安装 Docker Engine（含 Compose）和 NVIDIA Container Toolkit（让容器能使用 GPU）。按[主 README](../README_ZH.md)在服务器上下载所选模式的完整权重，保留模型代码、tokenizer、参考音频及语音资产。默认下载到仓库根目录的 `Realtime-Venus-Omni/` 或 `Realtime-Venus-Audio/`，`deploy/model/.env.example` 中的 `MODEL_DIR` 默认就指向这里。
+**GPU 服务器（模型）。** 配备 NVIDIA CUDA GPU 和可用驱动的 Linux 服务器，安装 Docker Engine（含 Compose）和 NVIDIA Container Toolkit（让容器能使用 GPU）。按[主 README](../README_ZH.md)在服务器上下载所选模式的完整权重，保留模型代码、tokenizer、参考音频及语音资产。默认下载到仓库根目录的 `Realtime-Venus-Omni/` 或 `Realtime-Venus-Audio/`，旁边是两种权重都要读取的 `config.yaml`；`deploy/model/.env.example` 中的 `MODEL_DIR` 默认就指向这个根目录。
 
 **你的电脑（网页服务、Harness、Codex）。** macOS 或 Linux，安装 Docker Desktop 或 Docker Engine；不需要 GPU 和权重——tokenizer 从模型服务读取。Codex 后端需要网络，并在容器里登录一次。
 
@@ -103,7 +103,7 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 | 字段 | 默认值 | 作用 |
 | --- | --- | --- |
 | `MODEL_TYPE` | `omni` | `omni`：摄像头加麦克风、视频上传；`audio`：麦克风、音频上传。 |
-| `MODEL_DIR` | —（必填） | 完整权重目录，或包含两种权重子目录的下载目录。相对路径以 `./` 或 `../` 开头、相对 `deploy/model`（不写前缀时 Compose 会建一个空的命名卷）。以只读方式挂载。 |
+| `MODEL_DIR` | —（必填） | 下载根目录，包含 `config.yaml` 和权重子目录；服务按 `MODEL_TYPE` 选用对应子目录。相对路径以 `./` 或 `../` 开头、相对 `deploy/model`（不写前缀时 Compose 会建一个空的命名卷）。以只读方式挂载。 |
 | `REFERENCE_AUDIO` | `assets/HT_ref_audio.wav` | 参考音色，相对所选的权重目录。 |
 | `MODEL_PORT` | `8031` | 你的电脑访问模型时用的端口。 |
 | `MEMORY_MINUTES` | `40` | Omni 视频记忆时长（分钟）；Audio 不使用。 |
@@ -123,7 +123,7 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 | `GEMINI_API_KEY` | 空 | 可选的官方 Gemini 密钥，也可以在 Settings 中填写。 |
 | `PYTHON_IMAGE` / `PIP_INDEX_URL` | `python:3.11.18-slim-trixie@sha256:6737…` / PyPI | 构建用的基础镜像和包索引。 |
 
-修改 `.env` 后，在同一目录运行 `docker compose up -d` 生效。切换模式时，在服务器上修改 `MODEL_TYPE` 和 `MODEL_DIR` 并运行 `docker compose up -d`，再在 `deploy/web` 运行 `docker compose restart`，让网页服务读取新的模型类型。
+修改 `.env` 后，在同一目录运行 `docker compose up -d` 生效。切换模式时，在服务器上修改 `MODEL_TYPE`（另一种权重须已下载到同一根目录）并运行 `docker compose up -d`，再在 `deploy/web` 运行 `docker compose restart`，让网页服务读取新的模型类型。
 
 **Harness 设置**（`deploy/web/data/harness.json`）在网页 Settings 第一次保存时写入，初始值来自独立包的[配置文件](../harness/config.json)。它包含 Codex、路由、Polish（`responses`）、multimodal、Gemini、任务目录、反馈间隔、执行／排队／结果等待时长、各组件预算以及发言长度；字段说明见 [Harness 文档](../harness/README_ZH.md#配置文件)，文件中的相对路径以 `deploy/web/data` 为基准。
 

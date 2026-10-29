@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,6 +18,16 @@ class CheckpointTests(unittest.TestCase):
             self.assertEqual(checkpoint_directory(root, 'omni'), omni.resolve())
             with self.assertRaisesRegex(ValueError, 'contains omni weights'):
                 checkpoint_directory(omni, 'audio')
+
+    def test_referenced_config_yaml_must_sit_in_download_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            omni = checkpoint(root/'Realtime-Venus-Omni', 'realtime_venus_omni')
+            (omni/'config.json').write_text(json.dumps({'model_type':'realtime_venus_omni','venus_config_ref':{}}))
+            with self.assertRaisesRegex(ValueError, 'config.yaml'):
+                checkpoint_directory(omni, 'omni')
+            (root/'config.yaml').write_text('name: Realtime-Venus')
+            self.assertEqual(checkpoint_directory(root, 'omni'), omni.resolve())
 
     def test_reference_audio_defaults_to_checkpoint_voice(self):
         with tempfile.TemporaryDirectory() as tmp:
