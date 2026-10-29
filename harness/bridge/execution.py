@@ -366,8 +366,9 @@ class AgentDelegateBackend(DelegateBackend):
                             else ""
                         )
                     ),
-                    provider="codex_agent",
-                    model=self._general_config.model or "codex-configured",
+                    provider=f"{self._general_config.agent}_agent",
+                    model=self._general_config.model
+                    or f"{self._general_config.agent}-configured",
                     latency_ms=int((time.perf_counter_ns() - started) // 1_000_000),
                     work_id=request.work_id,
                     raw_metadata={
