@@ -6,6 +6,7 @@ import secrets
 import tempfile
 
 from demos.settings import UserSetup, config_path, load_setup, save_setup
+from .claude_login import ClaudeLoginCheck
 from .codex_login import CodexLoginCheck
 
 
@@ -13,7 +14,7 @@ class WebConfiguration:
     def __init__(self, path):
         self.path = config_path(path)
         self.token = secrets.token_urlsafe(32)
-        self.login = CodexLoginCheck()
+        self.logins = {"codex": CodexLoginCheck(), "claude": ClaudeLoginCheck()}
 
     def revision(self):
         return hashlib.sha256(self.path.read_bytes()).hexdigest() if self.path.exists() else "new"
@@ -33,10 +34,10 @@ class WebConfiguration:
 
     def check(self, setup, *, force_login=False):
         result = {"problems": self.problems(setup)}
-        login = self.login.check(setup.general.command[0], force=force_login)
+        login = self.logins[setup.general.agent].check(setup.general.command[0], force=force_login)
         if login["state"] != "logged_in" and login["message"] not in result["problems"]:
             result["problems"].append(login["message"])
-        return {"ok": not result["problems"], "problems": result["problems"], "codex_login": login}
+        return {"ok": not result["problems"], "problems": result["problems"], "agent_login": login}
 
     def status(self, *, force_login=False):
         try:
@@ -56,7 +57,7 @@ class WebConfiguration:
             "token": self.token,
             "configured": self.path.exists() and result["ok"],
             "check": result,
-            "codex_login": result["codex_login"],
+            "agent_login": result["agent_login"],
         }
 
     def save(self, body):

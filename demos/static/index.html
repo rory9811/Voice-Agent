@@ -389,11 +389,11 @@
         <p id="settings-guidance-copy"></p>
         <ul id="settings-issues"></ul>
       </section>
-      <section id="codex-login-panel" class="settings-guidance">
-        <strong data-i18n="codexLoginTitle">Codex login on this computer</strong>
-        <p id="codex-login-status" role="status"></p>
-        <p id="codex-login-help" data-i18n="codexLoginHelp" hidden>In deploy/web, run docker compose exec web codex login --device-auth, complete login, then recheck here.</p>
-        <button id="recheck-codex" type="button" class="secondary-button" data-i18n="codexRecheck">Recheck login</button>
+      <section id="agent-login-panel" class="settings-guidance">
+        <strong data-i18n="agentLoginTitle">Codex login on this computer</strong>
+        <p id="agent-login-status" role="status"></p>
+        <p id="agent-login-help" hidden></p>
+        <button id="recheck-login" type="button" class="secondary-button" data-i18n="agentRecheck">Recheck login</button>
       </section>
       <form id="settings-form" novalidate>
         <label><span data-i18n="workspace">Task workspace</span>
@@ -453,6 +453,13 @@
             <span data-i18n="backendSettings">Task connection</span
             ><svg class="icon"><use href="#i-chevron" /></svg>
           </summary>
+          <label
+            ><span data-i18n="taskAgent">Task agent</span
+            ><select id="task-agent">
+              <option value="codex">Codex</option>
+              <option value="claude">Claude Code</option>
+            </select></label
+          >
           <p class="field-hint" data-i18n="backendHint">
             Background tasks use this computer’s existing Codex connection.
           </p>
@@ -471,6 +478,7 @@
               <option value="medium" data-i18n="effortMedium">Medium</option>
               <option value="high" data-i18n="effortHigh">High</option>
               <option value="xhigh" data-i18n="effortXhigh">Extra high</option>
+              <option value="max" data-i18n="effortMax">Max</option>
             </select></label>
           <fieldset>
             <legend data-i18n="routingSettings">Task routing</legend>
@@ -485,7 +493,7 @@
             <p class="field-hint" data-i18n="routingHint">Only used in Auto mode. Low effort is recommended for faster routing.</p>
             <label><span data-i18n="modelProvider">Provider</span>
               <select id="routing-provider">
-                <option value="codex">Codex</option>
+                <option value="codex" class="agent-option">Codex</option>
                 <option value="gemini" data-i18n="geminiOfficial">Gemini</option>
               </select></label>
             <label><span data-i18n="routingModel">Routing model</span>
@@ -498,6 +506,7 @@
               <option value="medium" data-i18n="effortMedium">Medium</option>
               <option value="high" data-i18n="effortHigh">High</option>
               <option value="xhigh" data-i18n="effortXhigh">Extra high</option>
+              <option value="max" data-i18n="effortMax">Max</option>
             </select></label>
             <label><span data-i18n="routingTimeout">Routing time limit (seconds)</span>
               <input id="routing-timeout" type="number" min="1" max="180" step="1" required /></label>
@@ -508,7 +517,7 @@
             <legend data-i18n="responseSettings">Progress and result summaries</legend>
             <label><span data-i18n="modelProvider">Provider</span>
               <select id="response-provider">
-                <option value="codex">Codex</option>
+                <option value="codex" class="agent-option">Codex</option>
                 <option value="gemini" data-i18n="geminiOfficial">Gemini</option>
               </select></label>
             <label><span data-i18n="responseModel">Summary model</span>
@@ -521,18 +530,19 @@
               <option value="medium" data-i18n="effortMedium">Medium</option>
               <option value="high" data-i18n="effortHigh">High</option>
               <option value="xhigh" data-i18n="effortXhigh">Extra high</option>
+              <option value="max" data-i18n="effortMax">Max</option>
             </select></label>
           </fieldset>
           <fieldset>
             <legend data-i18n="multimodalSettings">Direct answers and multimodal understanding</legend>
             <label><span data-i18n="modelProvider">Provider</span>
               <select id="multimodal-provider">
-                <option value="codex">Codex</option>
+                <option value="codex" class="agent-option">Codex</option>
                 <option value="gemini" data-i18n="geminiOfficial">Gemini</option>
               </select></label>
             <label><span data-i18n="multimodalModel">Multimodal model</span>
               <input id="multimodal-model" autocomplete="off" /></label>
-            <p id="multimodal-codex-audio-hint" class="field-hint" data-i18n="codexAudioHint" hidden>Codex supports text and images, but cannot understand audio. Choose Gemini for audio understanding.</p>
+            <p id="multimodal-agent-audio-hint" class="field-hint" data-i18n="agentAudioHint" hidden>Codex supports text and images, but cannot understand audio. Choose Gemini for audio understanding.</p>
             <p class="field-hint" data-media-key="multimodalHint">Used when Auto routes to multimodal. This does not change the streaming Omni model.</p>
             <label><span data-i18n="reasoningEffort">Reasoning effort</span>
               <select id="multimodal-effort">
@@ -541,6 +551,7 @@
               <option value="medium" data-i18n="effortMedium">Medium</option>
               <option value="high" data-i18n="effortHigh">High</option>
               <option value="xhigh" data-i18n="effortXhigh">Extra high</option>
+              <option value="max" data-i18n="effortMax">Max</option>
             </select></label>
           </fieldset>
           <fieldset>
@@ -555,8 +566,8 @@
           </fieldset>
           <p class="field-hint" data-i18n="effortHint">Save and start a new conversation to apply changes.</p>
           <label
-            ><span data-i18n="codexPath">Codex executable</span
-            ><input id="backend-binary" required autocomplete="off"
+            ><span data-i18n="agentPath">Codex executable</span
+            ><input id="agent-binary" required autocomplete="off"
           /></label>
         </details>
         <p id="settings-message" class="field-hint" role="status"></p>
@@ -575,6 +586,6 @@
       </form>
     </dialog>
     <div id="toast" class="toast" role="status" hidden></div>
-    <script type="module" src="/static/app.js?v=20260921-model-modes"></script>
+    <script type="module" src="/static/app.js?v=20261029-task-agent"></script>
   </body>
 </html>

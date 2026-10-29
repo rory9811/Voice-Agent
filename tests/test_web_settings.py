@@ -19,7 +19,7 @@ class WebSettingsTests(unittest.TestCase):
             data['gemini']['api_key'] = 'saved-key'
             save_setup(data, path)
             config = WebConfiguration(path)
-            config.login.check = MagicMock(return_value={'state': 'logged_in', 'message': ''})
+            config.logins["codex"].check = MagicMock(return_value={'state': 'logged_in', 'message': ''})
             public = config.public()
             self.assertEqual(public['data']['duplex']['length_penalty'], 0.8)
             self.assertEqual(public['data']['gemini']['api_key'], '')
@@ -44,7 +44,7 @@ class WebSettingsTests(unittest.TestCase):
             data['workspace'] = elsewhere
             save_setup(data, path)
             config = WebConfiguration(path)
-            config.login.check = MagicMock(return_value={'state': 'logged_in', 'message': ''})
+            config.logins["codex"].check = MagicMock(return_value={'state': 'logged_in', 'message': ''})
             self.assertFalse(config.status())
             public = config.public()
             result = config.save(public)
