@@ -75,6 +75,8 @@ class CliRun:
         self.cwd = cwd
         self.process: asyncio.subprocess.Process | None = None
         self.stderr_tail = deque(maxlen=40)
+        # The first close's verdict: once the CLI is gone its tool groups cannot be found again.
+        self.cleaned: bool | None = None
 
     @property
     def pid(self):
@@ -160,6 +162,8 @@ class CliRun:
         process = self.process
         if process is None:
             return True
+        if self.cleaned is not None:
+            return self.cleaned
         groups = {process.pid}
         frozen = False
         if process.returncode is None:
@@ -185,7 +189,8 @@ class CliRun:
                 await asyncio.sleep(0.05)
             if not _any_alive(groups):
                 break
-        return not _any_alive(groups)
+        self.cleaned = not _any_alive(groups)
+        return self.cleaned
 
     async def _drain_stderr(self):
         while line := await self.process.stderr.readline():
@@ -203,7 +208,13 @@ def _any_alive(groups):
 
 
 def _descendant_groups(root):
-    """Process groups of root's live descendants, from /proc (Linux) or ps (macOS)."""
+    r"""Process groups of root's live descendants, from /proc (Linux) or ps (macOS).
+
+    Production takes the /proc branch, which a macOS test run never reaches. After changing it:
+    docker run --rm --init -v "$PWD":/src -w /src --entrypoint python realtime-venus-web \
+        -m unittest discover -s tests -p 'test_claude_*.py'
+    (--init reaps orphans; without it killed children stay zombies and count as alive.)
+    """
     parents = {}
     if Path("/proc/self/stat").exists():
         for entry in Path("/proc").iterdir():

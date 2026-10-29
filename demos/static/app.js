@@ -745,10 +745,14 @@ function updateAgent() {
 }
 $("task-agent").onchange = () => {
   storeAgentFields(state.agent);
-  // Model names belong to one vendor: roles that follow the agent go back to inheriting.
+  const agent = $("task-agent").value;
+  // Model names belong to one vendor: roles that follow the agent keep one name per agent.
   for (const role of ["routing", "response", "multimodal"])
-    if ($(`${role}-provider`).value === state.agent) $(`${role}-model`).value = "";
-  state.agent = $("task-agent").value;
+    if ($(`${role}-provider`).value === state.agent) {
+      state.roleModels[`${state.agent}:${role}`] = $(`${role}-model`).value;
+      $(`${role}-model`).value = state.roleModels[`${agent}:${role}`] || "";
+    }
+  state.agent = agent;
   loadAgentFields(state.agent);
   updateAgent();
   updateProviders();
@@ -862,6 +866,7 @@ async function openSettings(required = false) {
     state.configuration = await response.json();
     const data = state.configuration.data;
     $("task-agent").value = state.agent = data.agent;
+    state.roleModels = {};
     updateAgent();
     loadAgentFields(data.agent);
     $("backend-workspace").value = data.workspace || "";

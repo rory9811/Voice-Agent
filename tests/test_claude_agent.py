@@ -164,6 +164,22 @@ class ClaudeAgentTests(unittest.IsolatedAsyncioTestCase):
         cancelled = [e.details for e in self.events if e.kind == "cancelled"]
         self.assertIs(cancelled[0]["background_terminals_cleaned"], True)
 
+    async def test_cancel_reports_a_tool_group_that_outlives_kill(self):
+        # A group stuck in uninterruptible I/O survives SIGKILL; the cancel must not claim it gone.
+        provider, log = self.provider([INIT, {"spawn_sleep": 60, "detached": True}, {"sleep": 60}])
+        task = asyncio.create_task(provider.run(self.request(), self.emit))
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            if log.exists() and any("child" in entry for entry in read_log(log)):
+                break
+        stuck = next(e["child"] for e in read_log(log) if "child" in e)
+        with patch("harness.llm.claude._any_alive", lambda groups: stuck in groups):
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        cancelled = [e.details for e in self.events if e.kind == "cancelled"]
+        self.assertIs(cancelled[0]["background_terminals_cleaned"], False)
+
     def test_build_harness_uses_claude_agent(self):
         data = template()
         data["agent"] = "claude"
