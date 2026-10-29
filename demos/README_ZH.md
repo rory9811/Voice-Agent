@@ -29,7 +29,7 @@
 
 **GPU 服务器（模型）。** 配备 NVIDIA CUDA GPU 和可用驱动的 Linux 服务器，安装 Docker Engine（含 Compose）和 NVIDIA Container Toolkit（让容器能使用 GPU）。按[主 README](../README_ZH.md)在服务器上下载所选模式的完整权重，保留模型代码、tokenizer、参考音频及语音资产。默认下载到仓库根目录的 `Realtime-Venus-Omni/` 或 `Realtime-Venus-Audio/`，`deploy/model/.env.example` 中的 `MODEL_DIR` 默认就指向这里。
 
-**你的电脑（网页服务、Harness、Codex）。** macOS 或 Linux，安装 Docker Desktop 或 Docker Engine；不需要 GPU 和权重——tokenizer 从模型服务读取。Codex 后端需要网络，并在容器里登录一次。
+**你的电脑（网页服务、Harness、任务执行器）。** macOS 或 Linux，安装 Docker Desktop 或 Docker Engine；不需要 GPU 和权重——tokenizer 从模型服务读取。任务执行器（Codex 或 Claude Code）需要网络，并在容器里登录一次。
 
 <details>
 <summary>权重目录示例</summary>
@@ -64,7 +64,7 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 
    你的电脑必须能访问它的端口（`MODEL_PORT`，默认 8031）。在多人共用的服务器上，用 `chmod 600 .env` 保护这个文件。
 
-2. **你的电脑**，在 `deploy/web` 目录：`cp .env.example .env`，然后把 `MODEL_URL` 设为服务器地址（例如 `http://10.194.99.8:8031`），`VENUS_MODEL_TOKEN` 设为同一个密钥。启动网页服务，再登录一次 Codex：
+2. **你的电脑**，在 `deploy/web` 目录：`cp .env.example .env`，然后把 `MODEL_URL` 设为服务器地址（例如 `http://10.194.99.8:8031`），`VENUS_MODEL_TOKEN` 设为同一个密钥。启动网页服务，再登录一次要用的任务执行器——Codex，或用 Claude 订阅账号登录 Claude Code：
 
    ```bash
    docker compose up -d
@@ -74,7 +74,11 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
    docker compose exec web codex login --device-auth
    ```
 
-   如果连不上模型服务、模型未就绪或令牌不对，网页容器会退出，原因写在 `docker compose logs` 里，并自动重启，直到模型可用。容器重启期间，改用 `docker compose run --rm --entrypoint sh web -c 'mkdir -p "$CODEX_HOME" && codex login --device-auth'` 登录。
+   ```bash
+   docker compose exec -it web claude auth login
+   ```
+
+   如果连不上模型服务、模型未就绪或令牌不对，网页容器会退出，原因写在 `docker compose logs` 里，并自动重启，直到模型可用。容器重启期间，改用 `docker compose run --rm --entrypoint sh web -c 'mkdir -p "$CODEX_HOME" && codex login --device-auth'`（Codex）或 `docker compose run --rm -it --entrypoint sh web -c 'mkdir -p "$CLAUDE_CONFIG_DIR" && claude auth login'`（Claude Code）登录。
 
 **两端在同一台机器上：** 网页容器里的 `127.0.0.1` 指容器自己，所以 `MODEL_URL` 要设为 `http://host.docker.internal:8031`（Docker Desktop）或这台机器自己的地址。
 
@@ -119,21 +123,23 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 | `VENUS_MODEL_TOKEN` | —（必填） | 与模型服务相同的密钥。 |
 | `WEB_PORT` | `8032` | 网页地址为 `http://localhost:<WEB_PORT>`，只对本机开放。 |
 | `MODEL_TIMEOUT_S` | `180` | 模型请求超时（秒）。 |
-| `DATA_DIR` | `./data` | 设置（`harness.json`）、Codex 登录（`codex/`）和任务文件。相对路径以 `./` 开头、相对 `deploy/web`。 |
+| `DATA_DIR` | `./data` | 设置（`harness.json`）、执行器登录（`codex/`、`claude/`）和任务文件。相对路径以 `./` 开头、相对 `deploy/web`。 |
 | `GEMINI_API_KEY` | 空 | 可选的官方 Gemini 密钥，也可以在 Settings 中填写。 |
 | `PYTHON_IMAGE` / `PIP_INDEX_URL` | `python:3.11-slim` / PyPI | 构建用的基础镜像和包索引。 |
 
 修改 `.env` 后，在同一目录运行 `docker compose up -d` 生效。切换模式时，在服务器上修改 `MODEL_TYPE` 和 `MODEL_DIR` 并运行 `docker compose up -d`，再在 `deploy/web` 运行 `docker compose restart`，让网页服务读取新的模型类型。
 
-**Harness 设置**（`deploy/web/data/harness.json`）在网页 Settings 第一次保存时写入，初始值来自独立包的[配置文件](../harness/config.json)。它包含 Codex、路由、Polish（`responses`）、multimodal、Gemini、任务目录、反馈间隔、执行／排队／结果等待时长、各组件预算以及发言长度；字段说明见 [Harness 文档](../harness/README_ZH.md#配置文件)，文件中的相对路径以 `deploy/web/data` 为基准。
+**Harness 设置**（`deploy/web/data/harness.json`）在网页 Settings 第一次保存时写入，初始值来自独立包的[配置文件](../harness/config.json)。它包含任务执行器（`agent`：`codex` 或 `claude`，各有自己的 `codex` / `claude` 段；超时、看图和联网设置两者共用，放在 `codex` 段）、路由、Polish（`responses`）、multimodal、Gemini、任务目录、反馈间隔、执行／排队／结果等待时长、各组件预算以及发言长度；字段说明见 [Harness 文档](../harness/README_ZH.md#配置文件)，文件中的相对路径以 `deploy/web/data` 为基准。
 
-网页容器内运行 Codex 的任务沙箱（bubblewrap），它需要 `compose.yaml` 中设置的 `seccomp=unconfined` 和 `systempaths=unconfined` 两个选项，否则所有任务命令都会失败。这两个选项削弱了容器本身的隔离（放开所有系统调用、不再遮蔽 `/proc`），因此镜像以非 root 用户运行，网页只接受 `localhost` / `127.0.0.1` 这两个主机名；任务命令仍由沙箱限制在任务目录内。这套配置在 macOS 的 Docker Desktop 上验证过。在 Linux 主机上，AppArmor 可能还会拦截沙箱（需要 `apparmor=unconfined`，未验证），并且 `DATA_DIR` 必须允许 uid 1000 写入。
+网页容器内运行任务执行器的沙箱（两种执行器都用 bubblewrap；Claude Code 还通过 socat 转发网络流量），它需要 `compose.yaml` 中设置的 `seccomp=unconfined` 和 `systempaths=unconfined` 两个选项，否则所有任务命令都会失败。这两个选项削弱了容器本身的隔离（放开所有系统调用、不再遮蔽 `/proc`），因此镜像以非 root 用户运行，网页只接受 `localhost` / `127.0.0.1` 这两个主机名；任务命令仍由沙箱限制在任务目录内。这套配置在 macOS 的 Docker Desktop 上验证过。在 Linux 主机上，AppArmor 可能还会拦截沙箱（需要 `apparmor=unconfined`，未验证），并且 `DATA_DIR` 必须允许 uid 1000 写入。
 
 ### 网页设置
 
-任务工作目录默认留空，用户需在 Settings 中填写任务目录后才能开始体验，例如填 `workspace`；相对路径保存在本机的 `deploy/web/data` 目录下。保存后再次打开 Settings 会显示用户自己配置的路径。不要提交或发布 `deploy/web/data/` 和两个 `.env` 文件，它们包含配置、密钥、Codex 登录和任务文件。设置未完成时，选择语音、摄像头或视频会提示先完成 Settings；只检查当前选择的提供方所需配置。
+任务工作目录默认留空，用户需在 Settings 中填写任务目录后才能开始体验，例如填 `workspace`；相对路径保存在本机的 `deploy/web/data` 目录下。保存后再次打开 Settings 会显示用户自己配置的路径。不要提交或发布 `deploy/web/data/` 和两个 `.env` 文件，它们包含配置、密钥、执行器登录和任务文件。设置未完成时，选择语音、摄像头或视频会提示先完成 Settings；只检查当前选择的提供方所需配置。
 
 开始对话前，网页和服务端 WebSocket 入口都会通过 `codex login status` 检查容器内的 Codex 登录状态。Settings 会显示结果；在 `deploy/web` 运行 `docker compose exec web codex login --device-auth` 登录后，可点击重新检查。未登录、检查失败或超过 5 秒超时都会阻止新会话，仍可保存配置。该检查确认 CLI 本地登录状态，不代表额度或远端服务可用性检查。
+
+选择 **任务执行器：Claude Code** 时，改用 `claude auth status` 检查，只有 Claude 订阅登录才算通过（用 `docker compose exec -it web claude auth login` 登录）；API key 登录会显示“不是订阅登录”并阻止新会话。每次运行 Claude Code 都会从环境中删掉 `ANTHROPIC_*`、`CLAUDE_CODE_USE_*` 和 `CLAUDE_CODE_OAUTH_TOKEN`，不加载任何设置文件；CLI 报告的凭据不是订阅登录时拒绝运行，报告正在使用按量付费的额外用量时立即停止。订阅额度用完时任务失败，助手会说明额度不足，不会切换到 Codex 或 API。自己使用自己的订阅没有问题；如果要把这项服务提供给别人用，请先查看 Anthropic 关于订阅登录用于第三方产品的条款。
 
 主动播报任务进度默认关闭。在网页设置的“你的对话”中选择“开启：我同意接收语音进度反馈”，保存并开启新对话后生效；有新进展时才用一句话播报。关闭不影响任务执行、完成结果或主动询问进度。对应配置为 `feedback.proactive_progress`（布尔值，默认 `false`），保存在 `deploy/web/data/harness.json`；当前设置由此服务的用户共享。
 
@@ -142,19 +148,20 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 | 设置项 | 默认值 | 作用 |
 | --- | --- | --- |
 | **任务模式** | General | 每个委托直接交给执行器，不调用路由模型。选择 Auto 后启用自动能力选择及任务续接。 |
-| **任务执行** | Codex 默认模型、`low` 强度 | 控制后台任务执行器。 |
+| **任务执行器** | Codex | 由 Codex 或 Claude Code 执行所有后台任务，以及下面使用执行器的各环节；切换时这些环节一起改用所选执行器。 |
+| **任务执行** | 执行器默认模型、`low` 强度 | 控制后台任务执行器。 |
 | **Auto 路由** | 任务模型、`low`、30 秒 | 仅在 Auto 模式下使用。路由超时会终止该请求，不启动执行器。 |
-| **Polish 进度／结果整理** | Codex、任务模型、`low` | 可独立选择官方 Gemini；仍最多三句话。 |
-| **Multimodal** | Codex、任务模型、`low` | Auto 路由选择该能力时负责直接问答和多模态理解，可独立选择官方 Gemini。 |
+| **Polish 进度／结果整理** | 任务执行器、任务模型、`low` | 可独立选择官方 Gemini；仍最多三句话。 |
+| **Multimodal** | 任务执行器、任务模型、`low` | Auto 路由选择该能力时负责直接问答和多模态理解，可独立选择官方 Gemini。 |
 | **发言长度** | `length_penalty = 0.8` | 小于 1 更倾向提前结束发言；1 保持原行为；大于 1 更倾向长发言。范围为 0.1–5。 |
 
-Codex 的模型名留空时，依次使用任务模型、Codex 默认模型；Gemini 留空时使用下方的默认 Gemini 模型（初始为 `gemini-flash-latest`，可填写固定版本）。推理强度仅适用于 Codex，Gemini 使用其模型默认思考配置。旧配置中共用的直接问答参数会迁移到独立的 Multimodal 设置。
+执行器的模型名留空时，依次使用任务模型、执行器默认模型；Gemini 留空时使用下方的默认 Gemini 模型（初始为 `gemini-flash-latest`，可填写固定版本）。推理强度仅适用于执行器（Codex：`minimal`–`xhigh`；Claude Code：`low`–`max`），Gemini 使用其模型默认思考配置。旧配置中共用的直接问答参数会迁移到独立的 Multimodal 设置。
 
 #### 使用官方 Gemini
 
 1. 在网页“设置 → 任务连接 → 官方 Gemini 连接”填写 Google AI Studio API Key，或在 `deploy/web/.env` 中设置 `GEMINI_API_KEY` 后运行 `docker compose up -d`。
-2. 分别为 Polish、Auto 路由、Multimodal 选择 Codex 或 Gemini，按需设置各自模型；选择 Gemini 后，该环节的文本或媒体将发送到 Google 官方 API。
-3. 保存并开始新对话。默认任务模式仍为 General、所有提供方仍为 Codex；路由和 Multimodal 只有在 Auto 路径中才会实际使用。General 工具执行器继续使用 Codex，实时 Omni 模型不变。
+2. 分别为 Polish、Auto 路由、Multimodal 选择任务执行器或 Gemini，按需设置各自模型；选择 Gemini 后，该环节的文本或媒体将发送到 Google 官方 API。
+3. 保存并开始新对话。默认任务模式仍为 General、所有提供方仍为任务执行器；路由和 Multimodal 只有在 Auto 路径中才会实际使用。General 工具执行器继续使用任务执行器，实时 Omni 模型不变。
 
 密钥输入框留空表示保留已有密钥。网页配置接口只返回“已配置”状态；通过网页保存的密钥存于本机、权限为 `0600` 的 `deploy/web/data/harness.json`，不要提交到代码库。清除已存密钥时将文件中的 `gemini.api_key` 置空，同时检查本机环境变量。设置由该服务的用户共享。
 
@@ -178,6 +185,7 @@ docker compose down        # 停止并删除容器
 | --- | --- |
 | `deploy/web/data/harness.json` | 保存的任务、提供方和发言长度设置，包括 Gemini 密钥。 |
 | `deploy/web/data/codex/` | Codex 登录与会话状态。 |
+| `deploy/web/data/claude/` | Claude Code 登录与会话状态。 |
 | `deploy/web/data/<任务目录>/` | 任务文件。生成文件在会话结束后仍保留；网页下载链接只在对应会话内有效。 |
 
 ### 容量测量

@@ -25,9 +25,9 @@ services:
       # Loopback only: the page has no login of its own.
       - "127.0.0.1:${WEB_PORT:-8032}:8032"
     volumes:
-      # Settings (harness.json), Codex login and task files.
+      # Settings (harness.json), agent logins and task files.
       - ${DATA_DIR:-./data}:/data
-    # Codex's bubblewrap sandbox must create namespaces and mount /proc,
+    # The task agent's bubblewrap sandbox must create namespaces and mount /proc,
     # which Docker's default seccomp profile and masked /proc forbid. The
     # image runs as a non-root user so these relaxed options cannot reach
     # /proc/sys or the Docker VM.

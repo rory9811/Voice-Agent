@@ -31,8 +31,8 @@ Harness prepares a spoken reply, checks delivery eligibility, and removes reserv
 | Boundary | Included integration | How to extend it |
 | --- | --- | --- |
 | Conversational model | Omni via the Demo's `RemoteOmniServingPort` and HTTP model service. | Implement `VenusOmniServingPort`, or submit structured tasks through `DelegateHarness`. |
-| Task execution | Codex through `CodexAgentProvider` and its app-server connection. | Implement `GeneralAgentPort` for another executor. |
-| Routing, Polish and multimodal understanding | Codex by default; independently select official `GeminiBackend` / `GeminiDirect` in [Demo settings](../demos/README.md#official-gemini). | Implement `PlannerBackend` or the `DelegateBackend` contract. |
+| Task execution | Codex through `CodexAgentProvider` and its app-server connection, or Claude Code (subscription login only) through `ClaudeAgentProvider`, one `claude -p` process per turn; `agent` in the configuration selects it. | Implement `GeneralAgentPort` for another executor. |
+| Routing, Polish and multimodal understanding | The task agent by default; independently select official `GeminiBackend` / `GeminiDirect` in [Demo settings](../demos/README.md#official-gemini). | Implement `PlannerBackend` or the `DelegateBackend` contract. |
 | Client playback | Browser playback in the Demo. | Implement `PlaybackPort` and acknowledge only completed playback. |
 | Domain capabilities | `AgentSkill` and `SkillRegistry`. | Register a capability description, validated arguments, and executor. |
 
