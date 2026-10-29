@@ -25,11 +25,9 @@ from harness.bridge.serving import (
     InputAccepted,
     ModelOutputStep,
     OpenSession,
-    PlaybackAccepted,
     PlaybackAck,
     PrefillAppend,
     PrefillApplied,
-    PrefillDeferred,
     RawTokenMode,
     SessionCapabilities,
     SessionClosed,
@@ -124,8 +122,6 @@ class RemoteOmniServingPort:
             raise RemoteModelUnavailable("model_busy", str(detail))
         if resp.status_code == 408:
             raise RemoteOutputTimeout(str(detail))
-        if resp.status_code == 409 and path.endswith("/prefill"):
-            raise PrefillDeferred(str(detail))
         if resp.status_code == 410:
             raise RemoteSessionClosed(str(detail))
         raise RemoteServingError(f"HTTP {resp.status_code}: {detail}")
@@ -287,7 +283,7 @@ class RemoteOmniServingPort:
             deduplicated=bool(j.get("deduplicated", False)),
         )
 
-    async def acknowledge_playback(self, request: PlaybackAck) -> PlaybackAccepted:
+    async def acknowledge_playback(self, request: PlaybackAck) -> None:
         body = {
             "session_id": request.session_id,
             "incarnation": request.incarnation,
@@ -296,15 +292,8 @@ class RemoteOmniServingPort:
             "at_ms": request.at_ms,
             "caused_by_work_id": request.caused_by_work_id,
         }
-        j = await self._request(
+        await self._request(
             "POST", f"/sessions/{request.session_id}/playback_ack", json=body
-        )
-        return PlaybackAccepted(
-            session_id=j["session_id"],
-            incarnation=int(j["incarnation"]),
-            utterance_id=j["utterance_id"],
-            cumulative_played_chunks=int(j["cumulative_played_chunks"]),
-            accepted_at_ms=int(j["accepted_at_ms"]),
         )
 
     async def close_session(self, request: CloseSession) -> SessionClosed:

@@ -5,9 +5,9 @@ OpenAI-style chat abstraction.  A conforming port keeps one resumable model
 session, returns unfiltered token IDs before audio becomes irreversible, and
 can append a private backend result to the same KV cache.
 
-Transport implementations may project these values onto WebSocket, gRPC, or
-an in-process model loop.  They must preserve the ordering and idempotency
-semantics documented by :class:`VenusOmniServingPort`.
+Transports (WebSocket, gRPC, an in-process loop) send inputs without waiting
+and return acknowledgements and outputs on one ordered event stream, keeping
+the delivery guarantees documented by :class:`VenusOmniServingPort`.
 """
 
 from __future__ import annotations
@@ -21,11 +21,7 @@ from typing import Protocol, runtime_checkable
 
 from harness.core.venus import VENUS_PROTOCOL_TOKENS
 
-PROTOCOL_VERSION = "realtime-venus-harness/2"
-
-
-class PrefillDeferred(RuntimeError):
-    """Prefill was not applied; drain pending model output before retrying."""
+PROTOCOL_VERSION = "realtime-venus-harness/3"
 
 
 class RawTokenMode(str, Enum):
@@ -412,27 +408,6 @@ class PlaybackAck:
 
 
 @dataclass(frozen=True, slots=True)
-class PlaybackAccepted:
-    """Serving-side acknowledgement of monotonic Talker chunk progress."""
-
-    session_id: str
-    incarnation: int
-    utterance_id: str
-    cumulative_played_chunks: int
-    accepted_at_ms: int
-
-    def __post_init__(self) -> None:
-        _require_text(self.session_id, "session_id")
-        _require_positive_int(self.incarnation, "incarnation")
-        _require_text(self.utterance_id, "utterance_id")
-        _require_nonnegative_int(
-            self.cumulative_played_chunks,
-            "cumulative_played_chunks",
-        )
-        _require_nonnegative_int(self.accepted_at_ms, "accepted_at_ms")
-
-
-@dataclass(frozen=True, slots=True)
 class CloseSession:
     """Release one session and its retained KV state."""
 
@@ -460,45 +435,48 @@ class SessionClosed:
         _require_nonnegative_int(self.closed_at_ms, "closed_at_ms")
 
 
+ServingEvent = InputAccepted | ModelOutputStep | PrefillApplied
+
+
 @runtime_checkable
 class VenusOmniServingPort(Protocol):
-    """Required async boundary implemented by a VenusOmni serving host.
+    """Required boundary implemented by a VenusOmni serving host.
 
-    Implementations must serialize the data/generation owner commands for one
-    session; media append may advance while an output pull is blocked, and
-    ``close_session`` is the control-plane exception which must be callable
-    concurrently to unblock that pull.  Input acceptance fences all earlier
-    media before a corresponding ``ModelOutputStep``.
-    ``append_prefill`` is idempotent by ``attempt_id`` and preserves the same
-    KV cache. Playback acknowledgement is the cumulative number of native
-    Talker audio chunks actually played, never generation or enqueue
-    completion. Repeating
-    ``append_prefill`` with the same ``attempt_id`` is idempotent and returns
-    the original application fence.  ``close_session`` must be callable while
-    ``next_output_step`` is blocked and must unblock that pending pull.
+    ``send_*`` methods only enqueue one request and never wait for the model;
+    ``next_event`` returns what the model emitted.  A conforming port
+    guarantees:
+
+    * sends reach the model in call order, each exactly once, also across a
+      reconnect;
+    * events arrive in the order the model emitted them, each exactly once;
+    * the ``InputAccepted`` for an input precedes every ``ModelOutputStep``
+      that consumed it, because the model enqueues the acknowledgement in the
+      same step that admits the input;
+    * an output counts as consumed once ``next_event`` returns it, and the
+      consumed count bounds how many further steps the model may run.
+
+    ``send_prefill`` is applied at the next generation boundary and is
+    idempotent by ``attempt_id``; its ``PrefillApplied`` arrives in stream
+    order.  ``send_playback_ack`` reports the cumulative number of native
+    Talker chunks actually played, never generation or enqueue completion.
+    ``next_event`` raises the built-in :class:`TimeoutError` when
+    ``timeout_s`` elapses.  ``close_session`` must be callable while
+    ``next_event`` is blocked and must make that call raise.
     """
 
     async def open_session(self, request: OpenSession) -> SessionOpened: ...
 
-    async def append_audio(self, request: AudioAppend) -> InputAccepted: ...
+    def send_audio(self, request: AudioAppend) -> None: ...
 
-    async def append_video_frame(self, request: VideoFrameAppend) -> InputAccepted: ...
+    def send_video_frame(self, request: VideoFrameAppend) -> None: ...
 
-    async def append_video_segment(
-        self, request: VideoSegmentAppend
-    ) -> InputAccepted: ...
+    def send_video_segment(self, request: VideoSegmentAppend) -> None: ...
 
-    async def next_output_step(
-        self,
-        session_id: str,
-        *,
-        incarnation: int,
-        timeout_s: float | None = None,
-    ) -> ModelOutputStep: ...
+    def send_prefill(self, request: PrefillAppend) -> None: ...
 
-    async def append_prefill(self, request: PrefillAppend) -> PrefillApplied: ...
+    def send_playback_ack(self, request: PlaybackAck) -> None: ...
 
-    async def acknowledge_playback(self, request: PlaybackAck) -> PlaybackAccepted: ...
+    async def next_event(self, *, timeout_s: float | None = None) -> ServingEvent: ...
 
     async def close_session(self, request: CloseSession) -> SessionClosed: ...
 
@@ -602,16 +580,15 @@ __all__ = [
     "InputAccepted",
     "ModelOutputStep",
     "OpenSession",
-    "PlaybackAccepted",
     "PlaybackAck",
     "PrefillAppend",
     "PrefillApplied",
-    "PrefillDeferred",
     "PrefillVisibility",
     "RawTokenMode",
     "SessionCapabilities",
     "SessionClosed",
     "SessionOpened",
+    "ServingEvent",
     "VenusOmniServingPort",
     "VideoFrameAppend",
     "VideoSegmentAppend",

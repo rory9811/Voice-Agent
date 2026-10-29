@@ -28,19 +28,18 @@ class HostClockTests(unittest.IsolatedAsyncioTestCase):
             ),
             opened_at_ms=0,
         )
-        host = VenusOmniServingHost(
-            session=session, serving=MagicMock(), playback=MagicMock(),
-            opened=opened, clock=lambda: 5_000,
-        )
         server_clock_ms = 10**12
-        await host.process_output(
-            ModelOutputStep(
-                session_id="s", incarnation=1, generation_id="foreground-s:1",
-                generation_epoch=1, step_seq=1, input_seq_cutoff=0,
-                at_ms=server_clock_ms, total_token_ids=(100,), audio=None,
-                audio_chunk_seq=None, turn_finished=True, finish_reason="turn_eos",
-            )
+        output = ModelOutputStep(
+            session_id="s", incarnation=1, generation_id="foreground-s:1",
+            generation_epoch=1, step_seq=1, input_seq_cutoff=0,
+            at_ms=server_clock_ms, total_token_ids=(100,), audio=None,
+            audio_chunk_seq=None, turn_finished=True, finish_reason="turn_eos",
         )
+        host = VenusOmniServingHost(
+            session=session, serving=MagicMock(next_event=AsyncMock(side_effect=[output])),
+            playback=MagicMock(), opened=opened, clock=lambda: 5_000,
+        )
+        await host.next_output()
         self.assertEqual(session.consume_total_ids.await_args.kwargs["at_ms"], 5_000)
         self.assertEqual(session.finish_model_turn.await_args.kwargs["at_ms"], 5_000)
 

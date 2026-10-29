@@ -203,16 +203,8 @@ class WebAgentSession:
     async def output(self):
         finished = True
         while True:
-            if (
-                finished
-                and self.host.queued_backend_results
-                and not self.host.active_backend_turn
-            ):
-                try:
-                    await self.host.begin_backend_turn(timeout_s=0)
-                    finished = False
-                except (TimeoutError, asyncio.TimeoutError):
-                    pass
+            if finished and await self.host.begin_backend_turn():
+                finished = False
             try:
                 processed = await self.host.next_output(timeout_s=1.0)
             except (TimeoutError, asyncio.TimeoutError):

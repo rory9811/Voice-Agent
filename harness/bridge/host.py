@@ -10,7 +10,7 @@ to join the two independent contracts:
 The host deliberately keeps backend-result collection away from the model
 port.  A result waiter only puts :class:`BackendInjection` objects in a local
 queue; the serving/model owner must explicitly call :meth:`begin_backend_turn`
-to apply a private prefill to the KV cache.
+to send a private prefill for the KV cache.
 """
 
 from __future__ import annotations
@@ -37,12 +37,11 @@ from .serving import (
     InputAccepted,
     ModelOutputStep,
     OpenSession,
-    PlaybackAccepted,
     PlaybackAck,
     PrefillAppend,
     PrefillApplied,
-    PrefillDeferred,
     RawTokenMode,
+    ServingEvent,
     SessionClosed,
     SessionOpened,
     VenusOmniServingPort,
@@ -98,23 +97,6 @@ class PlaybackPort(Protocol):
     async def enqueue(self, request: PlaybackEnqueue) -> None: ...
 
 
-class FeedbackSuperseded(RuntimeError):
-    """Safe to poll again: the queued progress was superseded before prefill."""
-
-
-@dataclass(frozen=True, slots=True)
-class BackendTurn:
-    """One backend prefill attempt currently associated with model output."""
-
-    work_id: str
-    attempt_number: int
-    attempt_id: str
-    utterance_id: str
-    generation_id: str
-    generation_epoch: int
-    feedback_id: str = ""
-
-
 @dataclass(frozen=True, slots=True)
 class ProcessedOutput:
     """Harness-safe projection of one serving output step."""
@@ -156,7 +138,6 @@ class _PlaybackState:
 @dataclass(slots=True)
 class _BackendDelivery:
     injection: BackendInjection
-    attempt_number: int
     attempt_id: str
     utterance_id: str
     generation_id: str
@@ -164,35 +145,18 @@ class _BackendDelivery:
     generation_finished: bool = False
     last_activity: float = field(default_factory=time.monotonic)
 
-    def public(self) -> BackendTurn:
-        return BackendTurn(
-            work_id=self.injection.work_id,
-            feedback_id=self.injection.feedback_id,
-            attempt_number=self.attempt_number,
-            attempt_id=self.attempt_id,
-            utterance_id=self.utterance_id,
-            generation_id=self.generation_id,
-            generation_epoch=self.generation_epoch,
-        )
-
 
 @dataclass(slots=True)
 class _PendingPrefill:
     injection: BackendInjection
-    attempt_number: int
     attempt_id: str
     utterance_id: str
-    request: PrefillAppend
+    sent_at: float
 
 
 @dataclass(frozen=True, slots=True)
 class _CollectorFailure:
     error: BaseException
-
-
-@dataclass(frozen=True, slots=True)
-class _HostClosed:
-    pass
 
 
 def _now_ms() -> int:
@@ -228,7 +192,10 @@ class VenusOmniServingHost:
         self._clock = clock
         self._event_seq = 0
         self._last_input_seq = 0
-        self._last_harness_sequence = 0
+        self._last_sent_harness_sequence = 0
+        # (event_seq, harness_sequence) of each sent input, in send order, until
+        # its InputAccepted arrives.
+        self._unacked_inputs: deque[tuple[int, int]] = deque()
         self._last_output_input_cutoff = 0
         self._generation_epoch_floor = 0
         self._finished_generations: set[tuple[str, int]] = set()
@@ -236,20 +203,16 @@ class VenusOmniServingHost:
         self._generation: _GenerationState | None = None
         self._backend_delivery: _BackendDelivery | None = None
         self._pending_prefill: _PendingPrefill | None = None
-        self._deferred_injection: BackendInjection | None = None
         self._playback: dict[str, _PlaybackState] = {}
         self._attempts: dict[str, int] = {}
-        self._backend_queue: asyncio.Queue[
-            BackendInjection | _CollectorFailure | _HostClosed
-        ] = asyncio.Queue(maxsize=16)
+        self._backend_queue: asyncio.Queue[BackendInjection | _CollectorFailure] = (
+            asyncio.Queue(maxsize=16)
+        )
         self._collector_task: asyncio.Task[None] | None = None
         self._feedback_monitor_task = None
         self._owner_lock = asyncio.Lock()
-        self._output_pull_lock = asyncio.Lock()
-        self._begin_lock = asyncio.Lock()
+        self._event_lock = asyncio.Lock()
         self._close_lock = asyncio.Lock()
-        self._active_pull_task: asyncio.Task[Any] | None = None
-        self._pending_pulled_output = False
         self._closing = False
         self._closed = False
         self._poisoned: BaseException | None = None
@@ -311,19 +274,6 @@ class VenusOmniServingHost:
         host.start_backend_collector()
         return host
 
-    @property
-    def active_backend_turn(self) -> BackendTurn | None:
-        delivery = self._backend_delivery
-        return delivery.public() if delivery is not None else None
-
-    @property
-    def queued_backend_results(self) -> int:
-        return (
-            self._backend_queue.qsize()
-            + int(self._deferred_injection is not None)
-            + int(self._pending_prefill is not None)
-        )
-
     def start_backend_collector(self) -> None:
         """Start the result-only waiter; it never invokes the serving port."""
 
@@ -340,18 +290,14 @@ class VenusOmniServingHost:
         """Attach session files before media starts, without changing Serving's media sequence."""
         async with self._owner_lock:
             self._ensure_usable()
-            if (
-                self._last_input_seq
-                or self._generation is not None
-                or self._model_owner_busy()
-            ):
+            if self._event_seq or self._generation is not None:
                 raise RuntimeError(
                     "attach files before beginning the serving media session"
                 )
             await self.session.ingest_user_file(name, data, mime_type)
 
-    async def append_audio(self, chunk: AudioChunk) -> InputAccepted:
-        """Buffer audio in Harness first, then fence the same bytes in serving."""
+    async def append_audio(self, chunk: AudioChunk) -> None:
+        """Buffer audio in Harness first, then send the same bytes to serving."""
 
         audio_format = _audio_format(chunk.mime_type)
         async with self._owner_lock:
@@ -370,13 +316,13 @@ class VenusOmniServingHost:
                 sample_width_bytes=chunk.sample_width_bytes,
             )
             harness_sequence = await self.session.ingest_user_audio(chunk)
-            return await self._append_serving_input(
+            self._send_input(
                 request,
-                self.serving.append_audio,
+                self.serving.send_audio,
                 harness_sequence=harness_sequence,
             )
 
-    async def append_video_frame(self, frame: VideoFrame) -> InputAccepted:
+    async def append_video_frame(self, frame: VideoFrame) -> None:
         """Buffer one frame in Harness before making it visible to the model."""
 
         async with self._owner_lock:
@@ -391,13 +337,13 @@ class VenusOmniServingHost:
                 mime_type=frame.mime_type,
             )
             harness_sequence = await self.session.ingest_user_video_frame(frame)
-            return await self._append_serving_input(
+            self._send_input(
                 request,
-                self.serving.append_video_frame,
+                self.serving.send_video_frame,
                 harness_sequence=harness_sequence,
             )
 
-    async def append_video_segment(self, segment: VideoSegment) -> InputAccepted:
+    async def append_video_segment(self, segment: VideoSegment) -> None:
         """Buffer an encoded segment, if serving explicitly supports segments."""
 
         if not self.opened.capabilities.video_segments:
@@ -416,226 +362,101 @@ class VenusOmniServingHost:
                 mime_type=segment.mime_type,
             )
             harness_sequence = await self.session.ingest_user_video_segment(segment)
-            return await self._append_serving_input(
+            self._send_input(
                 request,
-                self.serving.append_video_segment,
+                self.serving.send_video_segment,
                 harness_sequence=harness_sequence,
             )
 
     async def next_output(self, *, timeout_s: float | None = None) -> ProcessedOutput:
-        """Pull, validate and safely expose exactly one model output step."""
+        """Consume serving events in order until one output step is safe to expose.
 
-        # Do not hold the mutation lane while waiting for a potentially slow
-        # output stream. Media append may advance concurrently. Private
-        # prefill fails fast while this pull is active instead of racing a
-        # returned output across a generation fence.
-        async with self._output_pull_lock:
-            task = asyncio.current_task()
-            if task is None:
-                raise RuntimeError("next_output must run in an asyncio task")
-            self._active_pull_task = task
-            try:
+        ``timeout_s`` bounds the wait for an output step; acknowledgements
+        consumed on the way do not extend it.
+        """
+
+        # Wait for the stream without the owner lock, so media, playback ACKs
+        # and prefill sends never queue behind the model.  One consumer at a
+        # time keeps events processed in stream order.
+        async with self._event_lock:
+            deadline = None if timeout_s is None else time.monotonic() + timeout_s
+            while True:
                 self._ensure_usable()
-                output = await self.serving.next_output_step(
-                    self.opened.session_id,
-                    incarnation=self.opened.incarnation,
-                    timeout_s=timeout_s,
+                remaining = (
+                    None if deadline is None else max(0.0, deadline - time.monotonic())
                 )
-                self._pending_pulled_output = True
+                try:
+                    event = await self.serving.next_event(timeout_s=remaining)
+                except TimeoutError:
+                    raise
+                except Exception as exc:
+                    # A model error or lost link ends the ordered stream, so
+                    # inputs already sent can never be fenced: fail closed.
+                    self._poison(exc)
+                    raise
                 async with self._owner_lock:
                     self._ensure_usable()
-                    return await self._process_output_fail_closed(output)
-            finally:
-                self._pending_pulled_output = False
-                if self._active_pull_task is task:
-                    self._active_pull_task = None
+                    processed = await self._process_event_fail_closed(event)
+                if processed is not None:
+                    return processed
 
-    async def process_output(self, output: ModelOutputStep) -> ProcessedOutput:
-        """Process a pushed output DTO using the same owner/fence checks."""
+    async def begin_backend_turn(self) -> bool:
+        """Send the next queued result as a private prefill if the model is idle.
 
-        if self._model_owner_busy():
-            raise RuntimeError("another model output pull is active")
-        self._pending_pulled_output = True
-        try:
-            async with self._owner_lock:
-                self._ensure_usable()
-                return await self._process_output_fail_closed(output)
-        finally:
-            self._pending_pulled_output = False
+        Returns False without sending while no result is queued, or while a
+        generation, a backend delivery or an earlier prefill is in flight.
+        Serving applies the prefill at its next generation boundary and
+        reports it through ``next_output``'s event stream.
+        """
 
-    async def begin_backend_turn(
-        self, *, timeout_s: float | None = None
-    ) -> BackendTurn:
-        """Skip superseded progress internally while preserving the caller's deadline."""
-        deadline = None if timeout_s is None else time.monotonic() + timeout_s
-        while True:
-            remaining = (
-                None if deadline is None else max(0, deadline - time.monotonic())
-            )
-            try:
-                return await self._begin_backend_turn_once(timeout_s=remaining)
-            except FeedbackSuperseded:
-                if deadline is not None and time.monotonic() >= deadline:
-                    raise TimeoutError from None
-                continue
-
-    async def _begin_backend_turn_once(
-        self,
-        *,
-        timeout_s: float | None = None,
-    ) -> BackendTurn:
-        """Apply one queued result from the model/GPU owner coroutine."""
-
-        async with self._begin_lock:
+        async with self._owner_lock:
             self._ensure_usable()
-            if self._model_owner_busy():
-                raise RuntimeError("cannot prefill while a model output pull is active")
-            if self._generation is not None:
-                raise RuntimeError(
-                    "cannot prefill while another model generation is active"
-                )
-            if self._backend_delivery is not None:
-                raise RuntimeError("the previous backend delivery is still active")
-            pending = self._pending_prefill
-            injection: BackendInjection | None = None
-            if pending is None:
-                if self._deferred_injection is not None:
-                    injection = self._deferred_injection
-                    self._deferred_injection = None
-                else:
-                    item = await _queue_get(self._backend_queue, timeout_s)
-                    if isinstance(item, _HostClosed):
-                        raise RuntimeError(
-                            "VenusOmni serving host closed while waiting for result"
-                        )
-                    if isinstance(item, _CollectorFailure):
-                        raise RuntimeError(
-                            "backend result collector failed"
-                        ) from item.error
-                    injection = item
-            async with self._owner_lock:
-                self._ensure_usable()
-                # State may have changed while this coroutine waited for a
-                # result.  Never overwrite an in-flight foreground/backend
-                # generation; preserve the dequeued result for a later owner
-                # iteration.
-                if (
-                    self._model_owner_busy()
-                    or self._generation is not None
-                    or self._backend_delivery is not None
+            while (
+                self._generation is None
+                and self._backend_delivery is None
+                and self._pending_prefill is None
+                and not self._backend_queue.empty()
+            ):
+                item = self._backend_queue.get_nowait()
+                if isinstance(item, _CollectorFailure):
+                    raise RuntimeError("backend result collector failed") from item.error
+                injection = item
+                if injection.result.feedback_id and not self.session.injection_is_current(
+                    injection
                 ):
-                    if injection is not None:
-                        if self._deferred_injection is not None:
-                            self._fail_protocol("multiple deferred backend injections")
-                        self._deferred_injection = injection
-                    raise RuntimeError(
-                        "model became busy while waiting for backend result"
-                    )
-                if pending is None:
-                    assert injection is not None
-                    if (
-                        injection.result.feedback_id
-                        and not self.session.injection_is_current(injection)
-                    ):
-                        await self.session.discard_injection(injection)
-                        raise FeedbackSuperseded(
-                            "queued feedback is no longer relevant"
-                        )
-                    attempt_number = self._attempts.get(injection.feedback_id, 0) + 1
-                    self._attempts[injection.feedback_id] = attempt_number
-                    unique = uuid4().hex
-                    attempt_id = (
-                        f"{injection.feedback_id}:attempt:{attempt_number}:{unique}"
-                    )
-                    utterance_id = f"backend:{injection.feedback_id}:attempt:{attempt_number}:{unique}"
-                    request = PrefillAppend(
-                        session_id=self.opened.session_id,
-                        incarnation=self.opened.incarnation,
-                        work_id=injection.work_id,
-                        attempt_id=attempt_id,
-                        text_list=(injection.text,),
-                    )
-                    pending = _PendingPrefill(
-                        injection=injection,
-                        attempt_number=attempt_number,
-                        attempt_id=attempt_id,
-                        utterance_id=utterance_id,
-                        request=request,
-                    )
-                    self._pending_prefill = pending
+                    await self.session.discard_injection(injection)
+                    continue
+                attempt_number = self._attempts.get(injection.feedback_id, 0) + 1
+                self._attempts[injection.feedback_id] = attempt_number
+                unique = uuid4().hex
+                attempt_id = f"{injection.feedback_id}:attempt:{attempt_number}:{unique}"
+                utterance_id = (
+                    f"backend:{injection.feedback_id}:attempt:{attempt_number}:{unique}"
+                )
+                request = PrefillAppend(
+                    session_id=self.opened.session_id,
+                    incarnation=self.opened.incarnation,
+                    work_id=injection.work_id,
+                    attempt_id=attempt_id,
+                    text_list=(injection.text,),
+                )
+                self._pending_prefill = _PendingPrefill(
+                    injection=injection,
+                    attempt_id=attempt_id,
+                    utterance_id=utterance_id,
+                    sent_at=time.monotonic(),
+                )
                 try:
-                    applied = await asyncio.wait_for(
-                        self.serving.append_prefill(pending.request),
-                        getattr(self.session, "feedback_timeout_s", 60),
-                    )
-                except PrefillDeferred:
-                    # The serving owner guarantees that nothing was applied.
-                    # Keep the exact attempt while the caller drains output.
-                    raise TimeoutError from None
-                except Exception:  # noqa: BLE001 - one idempotent ambiguity retry
-                    # The first response may have been lost after the remote
-                    # side applied it.  Retry the exact same idempotency key,
-                    # never allocate a new attempt for an ambiguous failure.
-                    try:
-                        applied = await asyncio.wait_for(
-                            self.serving.append_prefill(pending.request),
-                            getattr(self.session, "feedback_timeout_s", 60),
-                        )
-                    except PrefillDeferred:
-                        raise TimeoutError from None
-                    except Exception as exc:
-                        self._poisoned = exc
-                        if pending.injection.result.feedback_id:
-                            self.session.feedback_failed(pending.injection)
-                        raise RuntimeError(
-                            "backend prefill failed twice with the same attempt_id"
-                        ) from exc
-                self._validate_prefill_applied(
-                    applied,
-                    pending.injection.work_id,
-                    pending.attempt_id,
-                )
-                key = (applied.generation_id, applied.generation_epoch)
-                if key in self._finished_generations:
-                    self._fail_protocol(
-                        "prefill resumed an already-finished generation"
-                    )
-                if applied.generation_epoch < self._generation_epoch_floor:
-                    self._fail_protocol(
-                        "prefill generation predates a finished generation"
-                    )
-                self._generation = _GenerationState(
-                    generation_id=applied.generation_id,
-                    generation_epoch=applied.generation_epoch,
-                    utterance_id=pending.utterance_id,
-                    caused_by_work_id=pending.injection.work_id,
-                    attempt_id=pending.attempt_id,
-                    feedback_id=pending.injection.feedback_id,
-                )
-                self._playback[pending.utterance_id] = _PlaybackState(
-                    utterance_id=pending.utterance_id,
-                    generation_id=applied.generation_id,
-                    generation_epoch=applied.generation_epoch,
-                    caused_by_work_id=pending.injection.work_id,
-                    attempt_id=pending.attempt_id,
-                )
-                self._backend_delivery = _BackendDelivery(
-                    injection=pending.injection,
-                    attempt_number=pending.attempt_number,
-                    attempt_id=pending.attempt_id,
-                    utterance_id=pending.utterance_id,
-                    generation_id=applied.generation_id,
-                    generation_epoch=applied.generation_epoch,
-                )
-                self._pending_prefill = None
-                if (
-                    pending.injection.result.feedback_id
-                    and self._feedback_monitor_task is None
-                ):
+                    self.serving.send_prefill(request)
+                except BaseException as exc:
+                    self._poison(exc)
+                    raise
+                if self._feedback_monitor_task is None:
                     self._feedback_monitor_task = asyncio.create_task(
                         self._monitor_feedback()
                     )
-                return self._backend_delivery.public()
+                return True
+            return False
 
     async def acknowledge_playback(
         self,
@@ -659,8 +480,8 @@ class VenusOmniServingHost:
 
         async with self._close_lock:
             # Wait only for an already-started mutation, then fence every new
-            # one.  Never wait for _output_pull_lock: next_output(timeout=None)
-            # may be blocked until close_session tears down the remote stream.
+            # one.  Never wait for _event_lock: next_output may be blocked
+            # in next_event until close_session ends the serving stream.
             async with self._owner_lock:
                 if self._closed or self._closing:
                     return
@@ -670,22 +491,11 @@ class VenusOmniServingHost:
                 await asyncio.gather(
                     self._feedback_monitor_task, return_exceptions=True
                 )
-            if (
-                self._backend_delivery
-                and self._backend_delivery.injection.result.feedback_id
-            ):
-                self.session.feedback_failed(self._backend_delivery.injection)
-            if self._backend_queue.full():
-                self._backend_queue.get_nowait()
-            self._backend_queue.put_nowait(_HostClosed())
+            self._feedback_fault()
             collector = self._collector_task
             if collector is not None:
                 collector.cancel()
                 await asyncio.gather(collector, return_exceptions=True)
-            pull = self._active_pull_task
-            current = asyncio.current_task()
-            if pull is not None and pull is not current:
-                pull.cancel()
             errors: list[BaseException] = []
             try:
                 closed = await self.serving.close_session(
@@ -698,8 +508,6 @@ class VenusOmniServingHost:
                 self._validate_closed(closed)
             except Exception as exc:  # noqa: BLE001 - both close attempts must run
                 errors.append(exc)
-            if pull is not None and pull is not current:
-                await asyncio.gather(pull, return_exceptions=True)
             async with self._owner_lock:
                 try:
                     await self.session.close()
@@ -713,19 +521,26 @@ class VenusOmniServingHost:
                 ) from errors[0]
 
     def _feedback_fault(self):
-        delivery = self._backend_delivery
-        if delivery and delivery.injection.result.feedback_id:
-            self.session.feedback_failed(delivery.injection)
+        # At most one exists: a prefill in flight, or the delivery it became.
+        owner = self._pending_prefill or self._backend_delivery
+        if owner and owner.injection.result.feedback_id:
+            self.session.feedback_failed(owner.injection)
 
     async def _monitor_feedback(self):
         timeout = self.session.feedback_timeout_s
         while not self._closed and not self._closing:
             await asyncio.sleep(min(timeout / 4, 1))
-            delivery = self._backend_delivery
-            if delivery and time.monotonic() - delivery.last_activity >= timeout:
-                self._feedback_fault()
-                self._poisoned = TimeoutError(
-                    "frontend feedback/ACK inactivity timeout"
+            # Until PrefillApplied arrives the clock runs from the send; after
+            # it, from the delivery's last output or playback ACK.
+            if self._pending_prefill:
+                since = self._pending_prefill.sent_at
+            elif self._backend_delivery:
+                since = self._backend_delivery.last_activity
+            else:
+                continue
+            if time.monotonic() - since >= timeout:
+                self._poison(
+                    TimeoutError("backend prefill ACK or frontend feedback/ACK timeout")
                 )
                 return
 
@@ -740,29 +555,100 @@ class VenusOmniServingHost:
             if not self._closed:
                 await self._backend_queue.put(_CollectorFailure(exc))
 
-    async def _append_serving_input(
+    def _send_input(
         self,
         request: AudioAppend | VideoFrameAppend | VideoSegmentAppend,
-        append: Callable[[Any], Any],
+        send: Callable[[Any], None],
         *,
         harness_sequence: int,
-    ) -> InputAccepted:
+    ) -> None:
         try:
             if isinstance(harness_sequence, bool) or not isinstance(
                 harness_sequence, int
             ):
                 self._fail_protocol("Harness ingest did not return an integer sequence")
-            if harness_sequence != self._last_harness_sequence + 1:
+            if harness_sequence != self._last_sent_harness_sequence + 1:
                 self._fail_protocol("Harness media sequence must be contiguous")
-            accepted = await append(request)
-            self._validate_input_accepted(accepted, request.event_seq)
+            self._unacked_inputs.append((request.event_seq, harness_sequence))
+            self._last_sent_harness_sequence = harness_sequence
+            send(request)
         except BaseException as exc:
-            self._poisoned = exc
-            self._feedback_fault()
+            # Harness already buffered this input.  If serving may not see it,
+            # the two media sequences can never be matched again.
+            self._poison(exc)
             raise
-        self._last_harness_sequence = harness_sequence
+
+    async def _process_event_fail_closed(
+        self,
+        event: ServingEvent,
+    ) -> ProcessedOutput | None:
+        try:
+            if isinstance(event, InputAccepted):
+                self._accept_input(event)
+                return None
+            if isinstance(event, PrefillApplied):
+                self._apply_prefill(event)
+                return None
+            if isinstance(event, ModelOutputStep):
+                return await self._process_output_locked(event)
+            self._fail_protocol(f"unexpected serving event: {type(event).__name__}")
+        except BaseException as exc:
+            # Once a serving event has been observed, token cursor, playback
+            # queue or Harness state may already have advanced.  The stream
+            # cannot be replayed, so every failure after observation poisons
+            # this host.
+            self._poison(exc)
+            raise
+
+    def _accept_input(self, accepted: InputAccepted) -> None:
+        if not self._unacked_inputs:
+            self._fail_protocol("input ACK without an unacknowledged input")
+        event_seq, harness_sequence = self._unacked_inputs[0]
+        self._validate_input_accepted(accepted, event_seq, harness_sequence)
+        self._unacked_inputs.popleft()
         self._last_input_seq = accepted.input_seq
-        return accepted
+
+    def _apply_prefill(self, applied: PrefillApplied) -> None:
+        pending = self._pending_prefill
+        if pending is None:
+            self._fail_protocol("prefill ACK without a prefill in flight")
+        self._validate_prefill_applied(
+            applied,
+            pending.injection.work_id,
+            pending.attempt_id,
+        )
+        if self._generation is not None:
+            # Serving applies a prefill only at a generation boundary, which
+            # this ordered stream delivers before the ACK.
+            self._fail_protocol("prefill applied while another generation is active")
+        key = (applied.generation_id, applied.generation_epoch)
+        if key in self._finished_generations:
+            self._fail_protocol("prefill resumed an already-finished generation")
+        if applied.generation_epoch < self._generation_epoch_floor:
+            self._fail_protocol("prefill generation predates a finished generation")
+        self._generation = _GenerationState(
+            generation_id=applied.generation_id,
+            generation_epoch=applied.generation_epoch,
+            utterance_id=pending.utterance_id,
+            caused_by_work_id=pending.injection.work_id,
+            attempt_id=pending.attempt_id,
+            feedback_id=pending.injection.feedback_id,
+        )
+        self._playback[pending.utterance_id] = _PlaybackState(
+            utterance_id=pending.utterance_id,
+            generation_id=applied.generation_id,
+            generation_epoch=applied.generation_epoch,
+            caused_by_work_id=pending.injection.work_id,
+            attempt_id=pending.attempt_id,
+        )
+        self._backend_delivery = _BackendDelivery(
+            injection=pending.injection,
+            attempt_id=pending.attempt_id,
+            utterance_id=pending.utterance_id,
+            generation_id=applied.generation_id,
+            generation_epoch=applied.generation_epoch,
+        )
+        self._pending_prefill = None
 
     async def _process_output_locked(self, output: ModelOutputStep) -> ProcessedOutput:
         self._validate_output_fence(output)
@@ -866,20 +752,6 @@ class VenusOmniServingHost:
             tail=tail,
         )
 
-    async def _process_output_fail_closed(
-        self,
-        output: ModelOutputStep,
-    ) -> ProcessedOutput:
-        try:
-            return await self._process_output_locked(output)
-        except BaseException as exc:
-            # Once a serving step has been observed, token cursor, playback queue or
-            # Harness state may already have advanced.  Retrying the same step
-            # is unsafe, so every failure after observation poisons this host.
-            self._poisoned = exc
-            self._feedback_fault()
-            raise
-
     def _select_generation(self, output: ModelOutputStep) -> _GenerationState:
         current = self._generation
         key = (output.generation_id, output.generation_epoch)
@@ -976,7 +848,7 @@ class VenusOmniServingHost:
         if cumulative_played_chunks > state.total_chunks:
             raise ValueError("playback acknowledgement exceeds queued Talker chunks")
         try:
-            accepted = await self.serving.acknowledge_playback(
+            self.serving.send_playback_ack(
                 PlaybackAck(
                     session_id=self.opened.session_id,
                     incarnation=self.opened.incarnation,
@@ -986,22 +858,16 @@ class VenusOmniServingHost:
                     caused_by_work_id=state.caused_by_work_id,
                 )
             )
-            self._validate_playback_accepted(
-                accepted,
-                utterance_id,
-                cumulative_played_chunks,
-            )
             newly_played = await self.session.acknowledge_playback_chunks(
                 utterance_id,
                 cumulative_played_chunks,
                 at_ms=at_ms,
             )
         except BaseException as exc:
-            # The remote and local playback ledgers must advance together.
-            # Once either side was contacted, continuing after an error could
-            # incorrectly mark a Work delivered, so fail closed.
-            self._poisoned = exc
-            self._feedback_fault()
+            # The browser report is the fact both ledgers record.  Once serving
+            # may have been told, continuing after an error could incorrectly
+            # mark a Work delivered, so fail closed.
+            self._poison(exc)
             raise
         if self._backend_delivery and cumulative_played_chunks > state.played_chunks:
             self._backend_delivery.last_activity = time.monotonic()
@@ -1038,12 +904,12 @@ class VenusOmniServingHost:
             expired = self._finished_generation_order.popleft()
             self._finished_generations.discard(expired)
 
-    def _model_owner_busy(self) -> bool:
-        """Whether a pulled output owns or may next mutate generation state."""
-
-        return self._active_pull_task is not None or self._pending_pulled_output
-
-    def _validate_input_accepted(self, accepted: InputAccepted, event_seq: int) -> None:
+    def _validate_input_accepted(
+        self,
+        accepted: InputAccepted,
+        event_seq: int,
+        harness_sequence: int,
+    ) -> None:
         if accepted.session_id != self.opened.session_id:
             self._fail_protocol("input ACK has wrong session_id")
         if accepted.incarnation != self.opened.incarnation:
@@ -1053,7 +919,7 @@ class VenusOmniServingHost:
         expected_input_seq = self._last_input_seq + 1
         if accepted.input_seq != expected_input_seq:
             self._fail_protocol("serving input_seq must start at 1 and be contiguous")
-        if accepted.input_seq != self._last_harness_sequence + 1:
+        if accepted.input_seq != harness_sequence:
             self._fail_protocol(
                 "serving input_seq must match the Harness media sequence"
             )
@@ -1082,21 +948,6 @@ class VenusOmniServingHost:
         if applied.work_id != work_id or applied.attempt_id != attempt_id:
             self._fail_protocol("prefill ACK does not match request/attempt")
 
-    def _validate_playback_accepted(
-        self,
-        accepted: PlaybackAccepted,
-        utterance_id: str,
-        cumulative_played_chunks: int,
-    ) -> None:
-        if accepted.session_id != self.opened.session_id:
-            self._fail_protocol("playback ACK has wrong session_id")
-        if accepted.incarnation != self.opened.incarnation:
-            self._fail_protocol("playback ACK has wrong incarnation")
-        if accepted.utterance_id != utterance_id:
-            self._fail_protocol("playback ACK has wrong utterance_id")
-        if accepted.cumulative_played_chunks != cumulative_played_chunks:
-            self._fail_protocol("playback ACK changed cumulative chunk count")
-
     def _validate_closed(self, closed: SessionClosed) -> None:
         if closed.session_id != self.opened.session_id:
             raise HostProtocolError("close ACK has wrong session_id")
@@ -1107,10 +958,13 @@ class VenusOmniServingHost:
         self._event_seq += 1
         return self._event_seq
 
-    def _fail_protocol(self, message: str) -> None:
-        error = HostProtocolError(message)
+    def _poison(self, error: BaseException) -> None:
         self._poisoned = error
         self._feedback_fault()
+
+    def _fail_protocol(self, message: str) -> None:
+        error = HostProtocolError(message)
+        self._poison(error)
         raise error
 
     def _ensure_usable(self) -> None:
@@ -1120,23 +974,6 @@ class VenusOmniServingHost:
             raise RuntimeError(
                 "VenusOmni serving host is in a failed state"
             ) from self._poisoned
-
-
-async def _queue_get(
-    queue: asyncio.Queue[BackendInjection | _CollectorFailure | _HostClosed],
-    timeout_s: float | None,
-) -> BackendInjection | _CollectorFailure | _HostClosed:
-    if timeout_s is None:
-        return await queue.get()
-    if timeout_s == 0:
-        try:
-            return queue.get_nowait()
-        except asyncio.QueueEmpty:
-            raise TimeoutError from None
-    try:
-        return await asyncio.wait_for(queue.get(), timeout=timeout_s)
-    except TimeoutError:
-        raise TimeoutError from None
 
 
 async def _close_serving_after_failed_open(
@@ -1166,7 +1003,6 @@ def _audio_format(mime_type: str) -> AudioFormat:
 
 __all__ = [
     "AudioDisposition",
-    "BackendTurn",
     "HostProtocolError",
     "PlaybackEnqueue",
     "PlaybackPort",
