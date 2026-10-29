@@ -365,6 +365,8 @@ def main(argv: list[str] | None = None) -> None:
         ws_ping_interval=5.0,
         ws_ping_timeout=5.0,
         ws_max_size=wire.MAX_FRAME_BYTES,
+        # "auto" picks the legacy websockets implementation, deprecated since websockets 14.
+        ws="websockets-sansio",
     )
 
 
