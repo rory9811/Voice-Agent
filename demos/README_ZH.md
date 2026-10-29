@@ -82,8 +82,6 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 
 **两端在同一台机器上：** 网页容器里的 `127.0.0.1` 指容器自己，所以 `MODEL_URL` 要设为 `http://host.docker.internal:8031`（Docker Desktop）或这台机器自己的地址。
 
-**从另一台电脑打开网页**（例如网页也部署在 GPU 服务器上）：在 `deploy/web/.env` 里把 `PUBLIC_HOST` 设为服务器地址（如 `10.194.99.8`），`WEB_BIND_IP` 设为 `0.0.0.0`，然后打开 `http://10.194.99.8:<WEB_PORT>`。网页没有登录，能访问这个地址和端口的人都能使用它。浏览器只在 localhost 或 HTTPS 下开放摄像头和麦克风，所以通过 `http://` 加 IP 打开时，要在 Chrome 的 `chrome://flags/#unsafely-treat-insecure-origin-as-secure` 里加入这个地址并重启浏览器。
-
 ## 在本地电脑打开
 
 打开 **[http://localhost:8032](http://localhost:8032)**，开始会话。
@@ -96,9 +94,9 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 
 侧边任务面板支持查看进度、取消任务和下载产物。
 
-模型同一时间支持**一个活跃会话**。如果网页服务没来得及关闭会话就退出（崩溃、断网），模型在 15 秒内收不到请求后会释放这个名额。网页默认只发布在 `127.0.0.1` 上，浏览器信任它使用摄像头和麦克风。
+模型同一时间支持**一个活跃会话**。如果网页服务没来得及关闭会话就退出（崩溃、断网），模型在 15 秒内收不到请求后会释放这个名额。网页只发布在 `127.0.0.1` 上，浏览器信任它使用摄像头和麦克风。
 
-**延迟。** 对话中每秒约有 3 次依次进行的模型请求，外加 1 次输出拉取，全部经过网络。往返延迟约 100 ms 以内时体验接近同机部署；超过约 200 ms 时回复会变慢，输入可能积压。可在本地用 `curl -s -o /dev/null -w '%{time_total}\n' http://10.194.99.8:8031/healthz` 测量（地址换成你的 `MODEL_URL`）。延迟高时，把网页服务也部署到 GPU 服务器上并从另一台电脑打开（见上文），模型请求就不再经过网络。
+**延迟。** 对话中每秒约有 3 次依次进行的模型请求，外加 1 次输出拉取，全部经过网络。往返延迟约 100 ms 以内时体验接近同机部署；超过约 200 ms 时回复会变慢，输入可能积压。可在本地用 `curl -s -o /dev/null -w '%{time_total}\n' http://10.194.99.8:8031/healthz` 测量（地址换成你的 `MODEL_URL`）。
 
 ## 配置
 
@@ -123,9 +121,7 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 | --- | --- | --- |
 | `MODEL_URL` | —（必填） | 模型服务地址，例如 `http://10.194.99.8:8031`。启动时从这里读取模型类型和 tokenizer。 |
 | `VENUS_MODEL_TOKEN` | —（必填） | 与模型服务相同的密钥。 |
-| `WEB_PORT` | `8032` | 网页地址为 `http://<PUBLIC_HOST>:<WEB_PORT>`。 |
-| `PUBLIC_HOST` | `localhost` | 打开网页用的主机名或 IP。网页只接受 localhost 和这里设的名字（防 DNS 重绑定）。 |
-| `WEB_BIND_IP` | `127.0.0.1` | 网页监听的地址；从另一台电脑打开时设为 `0.0.0.0`。 |
+| `WEB_PORT` | `8032` | 网页地址为 `http://localhost:<WEB_PORT>`，只对本机开放。 |
 | `MODEL_TIMEOUT_S` | `180` | 模型请求超时（秒）。 |
 | `DATA_DIR` | `./data` | 设置（`harness.json`）、执行器登录（`codex/`、`claude/`）和任务文件。相对路径以 `./` 开头、相对 `deploy/web`。 |
 | `GEMINI_API_KEY` | 空 | 可选的官方 Gemini 密钥，也可以在 Settings 中填写。 |
@@ -135,7 +131,7 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 
 **Harness 设置**（`deploy/web/data/harness.json`）在网页 Settings 第一次保存时写入，初始值来自独立包的[配置文件](../harness/config.json)。它包含任务执行器（`agent`：`codex` 或 `claude`，各有自己的 `codex` / `claude` 段；超时、看图和联网设置两者共用，放在 `codex` 段）、路由、Polish（`responses`）、multimodal、Gemini、任务目录、反馈间隔、执行／排队／结果等待时长、各组件预算以及发言长度；字段说明见 [Harness 文档](../harness/README_ZH.md#配置文件)，文件中的相对路径以 `deploy/web/data` 为基准。
 
-网页容器内运行任务执行器的沙箱（两种执行器都用 bubblewrap；Claude Code 还通过 socat 转发网络流量），它需要 `compose.yaml` 中设置的 `seccomp=unconfined` 和 `systempaths=unconfined` 两个选项，否则所有任务命令都会失败。这两个选项削弱了容器本身的隔离（放开所有系统调用、不再遮蔽 `/proc`），因此镜像以非 root 用户运行，网页只接受 `localhost` / `127.0.0.1` 和 `PUBLIC_HOST` 指定的主机名；任务命令仍由沙箱限制在任务目录内。这套配置在 macOS 的 Docker Desktop 上验证过。在 Linux 主机上，AppArmor 可能还会拦截沙箱（需要 `apparmor=unconfined`，未验证），并且 `DATA_DIR` 必须允许 uid 1000 写入。
+网页容器内运行任务执行器的沙箱（两种执行器都用 bubblewrap；Claude Code 还通过 socat 转发网络流量），它需要 `compose.yaml` 中设置的 `seccomp=unconfined` 和 `systempaths=unconfined` 两个选项，否则所有任务命令都会失败。这两个选项削弱了容器本身的隔离（放开所有系统调用、不再遮蔽 `/proc`），因此镜像以非 root 用户运行，网页只接受 `localhost` / `127.0.0.1` 这两个主机名；任务命令仍由沙箱限制在任务目录内。这套配置在 macOS 的 Docker Desktop 上验证过。在 Linux 主机上，AppArmor 可能还会拦截沙箱（需要 `apparmor=unconfined`，未验证），并且 `DATA_DIR` 必须允许 uid 1000 写入。
 
 ### 网页设置
 

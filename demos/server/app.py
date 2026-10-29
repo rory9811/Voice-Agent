@@ -10,13 +10,13 @@ from urllib.parse import quote, urlsplit
 from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.responses import FileResponse, Response
 
-LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
-def allowed_host(header, hosts):
+def local_host(header):
     # The page has no login; a DNS-rebinding site would otherwise pass as "same origin".
     try:
-        return urlsplit("//" + (header or "")).hostname in hosts
+        return urlsplit("//" + (header or "")).hostname in LOCAL_HOSTS
     except ValueError:
         return False
 from fastapi.staticfiles import StaticFiles
@@ -27,8 +27,7 @@ from .session import WebAgentSession
 from demos.variants import model_name
 
 
-def create_app(*, settings_path, model_type, tokenizer, model_server_url, model_timeout_s=180.0, public_hosts=()):
-    hosts = LOCAL_HOSTS | {host.lower() for host in public_hosts}
+def create_app(*, settings_path, model_type, tokenizer, model_server_url, model_timeout_s=180.0):
     frontend_model = model_name(model_type)
     configuration = WebConfiguration(settings_path)
     static = Path(__file__).resolve().parents[1] / "static"
@@ -39,8 +38,8 @@ def create_app(*, settings_path, model_type, tokenizer, model_server_url, model_
     app.mount("/static", StaticFiles(directory=static), name="static")
 
     @app.middleware("http")
-    async def only_allowed_hosts(request, call_next):
-        if not allowed_host(request.headers.get("host"), hosts):
+    async def only_local_hosts(request, call_next):
+        if not local_host(request.headers.get("host")):
             return Response("Host rejected", status_code=403)
         return await call_next(request)
 
@@ -128,7 +127,7 @@ def create_app(*, settings_path, model_type, tokenizer, model_server_url, model_
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
-        if not allowed_host(websocket.headers.get("host"), hosts):
+        if not local_host(websocket.headers.get("host")):
             await websocket.close(code=1008)
             return
         origin = websocket.headers.get("origin")
