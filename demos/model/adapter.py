@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import time
-from collections import deque
 from typing import Any, Mapping
 
 from demos.model import wire as sw
 from demos.model.decoding import configure_length_penalty
 from demos.model.settings import DuplexSettings
+from demos.model.wire import StepStats
 
 _LOG = logging.getLogger("demos.model.adapter")
 
@@ -40,31 +39,6 @@ SESSION_LEASE_S = 15.0
 # ---------------------------------------------------------------------------
 # Capacity measurements, served by server.py at /stats
 # ---------------------------------------------------------------------------
-
-
-class StepStats:
-    """Wall-clock time of recent model steps (one step per second of input)."""
-
-    def __init__(self, size: int = 600) -> None:
-        self._ms: deque[float] = deque(maxlen=size)
-
-    def add(self, ms: float) -> None:
-        self._ms.append(ms)
-
-    def summary(self) -> dict[str, Any]:
-        if not self._ms:
-            return {"count": 0, "p50_ms": None, "p95_ms": None, "max_ms": None}
-        ordered = sorted(self._ms)
-
-        def nearest_rank(p: float) -> float:
-            return round(ordered[math.ceil(p * len(ordered)) - 1], 1)
-
-        return {
-            "count": len(ordered),
-            "p50_ms": nearest_rank(0.5),
-            "p95_ms": nearest_rank(0.95),
-            "max_ms": round(ordered[-1], 1),
-        }
 
 
 def gpu_memory() -> dict[str, int] | None:

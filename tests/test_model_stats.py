@@ -5,9 +5,9 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
-from demos.model.adapter import StepStats, gpu_memory
+from demos.model.adapter import gpu_memory
 from demos.model.server import _ServerConfig, create_app
-from demos.model.wire import PROTOCOL_VERSION, b64
+from demos.model.wire import PROTOCOL_VERSION, StepStats, b64
 from test_model_server import omni_adapter
 
 MIB = 1024 * 1024

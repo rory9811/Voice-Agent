@@ -20,11 +20,16 @@ client (py3.11) reconstructs the real DTOs from the same dicts.
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import json
+import math
+from collections import deque
 from typing import Any
 
 # Mirror harness/bridge/serving.py:24
-PROTOCOL_VERSION = "realtime-venus-harness/2"
+PROTOCOL_VERSION = "realtime-venus-harness/3"
+MAX_FRAME_BYTES = 1 << 20
 
 # Echo harness/bridge/serving.py enum .value strings.  The server uses DELTA mode:
 # each step carries only the token IDs generated since the previous step, so
@@ -267,8 +272,112 @@ def session_closed(
     }
 
 
+class FrameError(ValueError):
+    """A received frame is malformed or breaks the sequence."""
+
+
+def encode_frame(header: dict[str, Any], payload: bytes = b"") -> bytes:
+    """4-byte big-endian header length, UTF-8 JSON header, raw payload (no base64)."""
+
+    head = json.dumps(header, separators=(",", ":")).encode()
+    return len(head).to_bytes(4, "big") + head + payload
+
+
+def decode_frame(data: bytes) -> tuple[dict[str, Any], bytes]:
+    if len(data) > MAX_FRAME_BYTES:
+        raise FrameError(f"frame of {len(data)} bytes exceeds {MAX_FRAME_BYTES}")
+    if len(data) < 4:
+        raise FrameError("frame shorter than its length prefix")
+    end = 4 + int.from_bytes(data[:4], "big")
+    if end > len(data):
+        raise FrameError("header length exceeds frame")
+    try:
+        header = json.loads(data[4:end])
+    except ValueError as exc:
+        raise FrameError(f"header is not JSON: {exc}") from exc
+    if not isinstance(header, dict) or not isinstance(header.get("type"), str):
+        raise FrameError("header must be an object with a string type")
+    return header, data[end:]
+
+
+class Outbox:
+    """Sent frames kept until the peer confirms them, so a reconnect can replay them."""
+
+    def __init__(self, max_bytes: int = 32 << 20) -> None:
+        self._max_bytes = max_bytes
+        self._frames: deque[tuple[dict[str, Any], bytes]] = deque()
+        self._bytes = 0
+        self.last_seq = 0
+        # Wakes the writer coroutine; it clears the event once it has drained.
+        self.ready = asyncio.Event()
+
+    def push(self, header: dict[str, Any], payload: bytes = b"") -> int:
+        if self._bytes + len(payload) > self._max_bytes:
+            raise OverflowError("unconfirmed frames exceed the outbox limit")
+        self.last_seq += 1
+        header["seq"] = self.last_seq
+        self._frames.append((header, payload))
+        self._bytes += len(payload)
+        self.ready.set()
+        return self.last_seq
+
+    def confirm(self, ack: int) -> None:
+        while self._frames and self._frames[0][0]["seq"] <= ack:
+            self._bytes -= len(self._frames.popleft()[1])
+
+    def after(self, seq: int) -> list[tuple[dict[str, Any], bytes]]:
+        return [f for f in self._frames if f[0]["seq"] > seq]
+
+
+class Inbox:
+    """Accepts frames strictly in order; a replay after reconnect shows up as a duplicate."""
+
+    def __init__(self) -> None:
+        self.last = 0
+
+    def accept(self, seq: int) -> bool:
+        if seq <= self.last:
+            return False
+        if seq > self.last + 1:
+            raise FrameError(f"sequence gap: expected {self.last + 1}, got {seq}")
+        self.last = seq
+        return True
+
+
+class StepStats:
+    """Wall-clock time of recent model steps (one step per second of input)."""
+
+    def __init__(self, size: int = 600) -> None:
+        self._ms: deque[float] = deque(maxlen=size)
+
+    def add(self, ms: float) -> None:
+        self._ms.append(ms)
+
+    def summary(self) -> dict[str, Any]:
+        if not self._ms:
+            return {"count": 0, "p50_ms": None, "p95_ms": None, "max_ms": None}
+        ordered = sorted(self._ms)
+
+        def nearest_rank(p: float) -> float:
+            return round(ordered[math.ceil(p * len(ordered)) - 1], 1)
+
+        return {
+            "count": len(ordered),
+            "p50_ms": nearest_rank(0.5),
+            "p95_ms": nearest_rank(0.95),
+            "max_ms": round(ordered[-1], 1),
+        }
+
+
 __all__ = [
     "PROTOCOL_VERSION",
+    "MAX_FRAME_BYTES",
+    "FrameError",
+    "encode_frame",
+    "decode_frame",
+    "Outbox",
+    "Inbox",
+    "StepStats",
     "RAW_TOKEN_MODE",
     "FORMAT_PCM_S16LE",
     "VISIBILITY_PRIVATE",
