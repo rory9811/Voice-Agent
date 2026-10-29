@@ -30,7 +30,7 @@ Harness 整理口头回复，检查交付条件并移除保留协议文本。Ser
 
 | 边界 | 当前提供的集成 | 扩展方式 |
 | --- | --- | --- |
-| 对话模型 | Demo 通过 `RemoteOmniServingPort` 和 HTTP 模型服务连接 Omni。 | 实现 `VenusOmniServingPort`，或通过 `DelegateHarness` 提交结构化任务。 |
+| 对话模型 | Demo 通过 `RemoteOmniServingPort` 和 WebSocket 模型服务连接 Omni。 | 实现 `VenusOmniServingPort`，或通过 `DelegateHarness` 提交结构化任务。 |
 | 任务执行 | `CodexAgentProvider` 及其 app-server 连接。 | 为其他执行器实现 `GeneralAgentPort`。 |
 | 路由、回复整理与多模态理解 | 默认 Codex；网页可分别选择官方 `GeminiBackend` / `GeminiDirect`，详见 [Demo 配置](../demos/README_ZH.md#使用官方-gemini)。 | 实现 `PlannerBackend` 或 `DelegateBackend` 契约。 |
 | 客户端播放 | Demo 中的浏览器播放器。 | 实现 `PlaybackPort`，仅确认已完成的播放。 |

@@ -21,7 +21,7 @@
 | Harness + Codex | 嵌入网页服务，执行任务、跟踪进度并回传结果。 | [`server/resources.py`](server/resources.py)、[Harness](../harness/README_ZH.md#架构) |
 | 容器与配置 | 镜像、启动与配置持久化。 | [`deploy/`](../deploy/)、[`settings.py`](settings.py) |
 
-模型服务跑在 GPU 服务器上，其余组件都跑在你的电脑上，通过网络（例如公司 VPN）调用模型的 HTTP 接口。
+模型服务跑在 GPU 服务器上，其余组件都跑在你的电脑上，通过网络（例如公司 VPN）与模型通信。
 
 <p align="center"><img src="../assets/experience-zh.png" width="100%" alt="Realtime-Venus 网页体验界面" /><br /><sub>浏览器统一承载实时媒体、任务进度和结果下载。</sub></p>
 
@@ -94,9 +94,9 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 
 侧边任务面板支持查看进度、取消任务和下载产物。
 
-模型同一时间支持**一个活跃会话**。如果网页服务没来得及关闭会话就退出（崩溃、断网），模型在 15 秒内收不到请求后会释放这个名额。网页只发布在 `127.0.0.1` 上，浏览器信任它使用摄像头和麦克风。
+模型同一时间支持**一个活跃会话**。网页服务断开后，模型保留这个会话 60 秒，等它重连接回；这期间如果网页服务重启后新开会话，旧会话立即让位。网页只发布在 `127.0.0.1` 上，浏览器信任它使用摄像头和麦克风。
 
-**延迟。** 对话中每秒约有 3 次依次进行的模型请求，外加 1 次输出拉取，全部经过网络。往返延迟约 100 ms 以内时体验接近同机部署；超过约 200 ms 时回复会变慢，输入可能积压。可在本地用 `curl -s -o /dev/null -w '%{time_total}\n' http://10.194.99.8:8031/healthz` 测量（地址换成你的 `MODEL_URL`）。
+**延迟。** 输入不等回复、输出由模型推送，网络往返只让回复整体晚到一个往返的时间，不影响说话的节奏。连接中断时页面会提示，45 秒内恢复就接着原来的对话。可在本地用 `curl -s -o /dev/null -w '%{time_total}\n' http://10.194.99.8:8031/healthz` 测量（地址换成你的 `MODEL_URL`）。
 
 ## 配置
 
@@ -122,7 +122,7 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 | `MODEL_URL` | —（必填） | 模型服务地址，例如 `http://10.194.99.8:8031`。启动时从这里读取模型类型和 tokenizer。 |
 | `VENUS_MODEL_TOKEN` | —（必填） | 与模型服务相同的密钥。 |
 | `WEB_PORT` | `8032` | 网页地址为 `http://localhost:<WEB_PORT>`，只对本机开放。 |
-| `MODEL_TIMEOUT_S` | `180` | 模型请求超时（秒）。 |
+| `MODEL_TIMEOUT_S` | `180` | 开会话、关会话时等待模型的上限（秒）。 |
 | `DATA_DIR` | `./data` | 设置（`harness.json`）、执行器登录（`codex/`、`claude/`）和任务文件。相对路径以 `./` 开头、相对 `deploy/web`。 |
 | `GEMINI_API_KEY` | 空 | 可选的官方 Gemini 密钥，也可以在 Settings 中填写。 |
 | `PYTHON_IMAGE` / `PIP_INDEX_URL` | `python:3.11.18-slim-trixie@sha256:6737…` / PyPI | 构建用的基础镜像和包索引。 |

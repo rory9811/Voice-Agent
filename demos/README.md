@@ -21,7 +21,7 @@ The selected frontend handles streaming media and speech in the **interaction lo
 | Harness + Codex | Embedded task execution, progress, and result delivery. | [`server/resources.py`](server/resources.py), [Harness](../harness/README.md#architecture) |
 | Containers and settings | Images, startup and saved configuration. | [`deploy/`](../deploy/), [`settings.py`](settings.py) |
 
-The model service runs on a GPU server; every other component runs on your computer and calls the model's HTTP API over the network (for example a company VPN).
+The model service runs on a GPU server; every other component runs on your computer and talks to the model over the network (for example a company VPN).
 
 <p align="center"><img src="../assets/experience-en.png" width="100%" alt="Realtime-Venus browser demo" /><br /><sub>The browser is the entry point for live media, task progress, and result downloads.</sub></p>
 
@@ -95,9 +95,9 @@ Open **[http://localhost:8032](http://localhost:8032)** and start a conversation
 
 The side panel provides task progress, cancellation, and artifact downloads.
 
-The model serves **one active conversation**. If the web service stops without closing it (crash, network loss), the model frees the slot after 15 seconds without requests. The page is published on `127.0.0.1` only, which browsers trust for camera and microphone.
+The model serves **one active conversation**. After the web service disconnects, the model keeps that conversation for 60 seconds so it can reconnect; if a restarted web service opens a new conversation in that time, the old one yields immediately. The page is published on `127.0.0.1` only, which browsers trust for camera and microphone.
 
-**Latency.** Each second of conversation makes about three sequential requests to the model plus one output pull, all over the network. Round trips up to about 100 ms feel like a single-machine setup; above about 200 ms replies slow down and input can back up. Check from your computer with `curl -s -o /dev/null -w '%{time_total}\n' http://10.194.99.8:8031/healthz`, using your `MODEL_URL`.
+**Latency.** Input does not wait for replies and the model pushes its output, so a network round trip only delays each reply by one round trip; it does not change the rhythm of speech. When the link drops, the page shows a notice, and the conversation continues if it comes back within 45 seconds. Check the round trip from your computer with `curl -s -o /dev/null -w '%{time_total}\n' http://10.194.99.8:8031/healthz`, using your `MODEL_URL`.
 
 ## Configuration
 
@@ -123,7 +123,7 @@ The model serves **one active conversation**. If the web service stops without c
 | `MODEL_URL` | — (required) | Model server address, for example `http://10.194.99.8:8031`. The model type and tokenizer are read from it at startup. |
 | `VENUS_MODEL_TOKEN` | — (required) | The same secret as on the model server. |
 | `WEB_PORT` | `8032` | The page opens at `http://localhost:<WEB_PORT>`; it is published on loopback only. |
-| `MODEL_TIMEOUT_S` | `180` | Model request timeout in seconds. |
+| `MODEL_TIMEOUT_S` | `180` | Seconds to wait for the model when opening or closing a conversation. |
 | `DATA_DIR` | `./data` | Settings (`harness.json`), agent logins (`codex/`, `claude/`) and task files. Relative paths start with `./` and are relative to `deploy/web`. |
 | `GEMINI_API_KEY` | empty | Optional official Gemini key; it can also be entered in Settings. |
 | `PYTHON_IMAGE` / `PIP_INDEX_URL` | `python:3.11.18-slim-trixie@sha256:6737…` / PyPI | Base image and package index for the build. |
