@@ -83,7 +83,7 @@
   - 断开的那一刻：网页服务给浏览器发 `{"type":"model_link","state":"down"}`，页面显示一条不会自动消失的提示："与模型服务器的连接中断，正在重连；这段时间你说的话模型听不到。"实时麦克风和摄像头的数据在网页服务这一层直接丢弃，不进入 host，所以 `event_seq` 和 harness 媒体序号都保持连续。浏览器里已经缓冲的语音会继续播完。
   - 为什么丢弃而不是缓存：如果缓存这 16 s 的输入，恢复后模型会一口气处理这些旧输入，回答滞后十几秒，播放队列也越积越长。丢弃的含义很简单——"这 16 s 模型没听到"，可以直接告诉用户。上传文件模式例外：文件是内容，不是实时输入，照常缓冲，恢复后补发。
   - 恢复：发送 `state: "up"`，页面提示"已重新连接模型服务器"。会话、KV、正在进行的后台任务都接着用；断开前已经发出但没确认的输入和输出，会按顺序补送。
-  - 超过 45 s 仍未恢复：发 `fatal_error`，使用新错误码 `model_link_lost`，提示"与模型服务器的连接中断超过 45 秒，本次会话已结束，请重新开始。"
+  - 超过 45 s 仍未恢复，或恢复时模型已没有这个会话（比如模型服务器重启过，resume 几秒内就收到 `session_lost`）：发 `fatal_error`，使用新错误码 `model_link_lost`，提示"与模型服务器的连接中断，无法接回本次会话，请重新开始。"提示不写原因，因为这两种情况都会走到这里。
 
 - **D8 不合并 `a9db774`（分支 `claude/quizzical-austin-7e7b76`）。** 这个提交修的是 HTTP 空闲连接复用时的撞车：uvicorn 的 keep-alive 比客户端早几百毫秒关闭空闲连接，客户端恰好在这时复用它，请求就丢了。WebSocket 方案落地后，会话流量全部走一条从不空闲的连接（每秒都有数据，另外还有 5 s 一次的 ping），而 keep-alive 超时本来就不作用于 WebSocket。剩下的 HTTP 请求只有网页启动时的 `/healthz` 和 `/tokenizer`（`resources.py` 里每个 `httpx.Client` 只发一个请求就关闭，不会复用连接），以及手工查询的 `/stats`。撞车需要"复用一条已空闲 4–5 s 的连接"，这个条件不再出现，所以不合并这个修复，删掉那个分支即可。另一种断连（aTrust 自己掐断，即模式 2）由 D6 的重连覆盖。
 - **D9 撤掉 `377ce60`（`PUBLIC_HOST` / `WEB_BIND_IP`）。** 它是为"把网页搬到 GPU 服务器"做的，这条路已经放弃。连同它改的文档和测试一起撤掉；`253cb73`（浏览器固定提前 1 s 起播）保留。
@@ -117,7 +117,7 @@
 - websockets 客户端必须传 `proxy=None`。websockets 15 起默认会读取系统和环境变量里的代理，这与原 httpx 客户端设 `trust_env=False` 的理由相同。
 - 认证：WebSocket 握手带 `Authorization: Bearer <VENUS_MODEL_TOKEN>`。FastAPI 的 `@app.middleware("http")` 不会拦截 WebSocket，所以 `/session` 必须自己用 `token_ok` 校验，不通过就以 1008 关闭。
 - 中间提交不能部署：Task 2–6 期间，网页和模型两侧暂时对不上；只有 Task 9 时才部署。
-- 测试命令（仓库根目录）：`python3 -m pytest -q tests --ignore=tests/test_checkpoint.py --ignore=tests/test_model_modes.py`。浸泡测试要单独跑：`python3 -m pytest -q tests/link_soak.py`（文件名不匹配 `test_*.py`，默认不会被收集）。本机 python3 的 websockets 是 16.0、uvicorn 是 0.46；本计划用到的 API（`connect` 的 `additional_headers`、`proxy`、`open_timeout`、`ping_interval`、`ping_timeout`、`max_size`，以及 uvicorn 的 `ws_ping_interval`、`ws_ping_timeout`、`ws_max_size`）在这两个版本里都存在。
+- 测试命令（仓库根目录）：`python3 -m pytest -q tests --ignore=tests/test_checkpoint.py --ignore=tests/test_model_modes.py`。浸泡测试要单独跑：`python3 -m pytest -q tests/link_soak.py`（文件名不匹配 `test_*.py`，默认不会被收集）。本机 python3 的 websockets 是 16.0、uvicorn 是 0.46；本计划用到的 API（`connect` 的 `additional_headers`、`proxy`、`open_timeout`、`ping_interval`、`ping_timeout`、`close_timeout`、`max_size`，以及 uvicorn 的 `ws_ping_interval`、`ws_ping_timeout`、`ws_max_size`）在这两个版本里都存在。
 
 ## Review Focus
 
@@ -248,7 +248,7 @@
 - Consumes：Task 1 的帧函数、Task 3 的 adapter 方法。
 - Produces：
   - `GET /healthz` 新增 `"protocol_version": wire.PROTOCOL_VERSION`。
-  - `WS /session`：先用 `token_ok(websocket)` 校验，失败以 1008 关闭；accept 后读第一帧，`open` → `adapter.open_session`、回 `opened`；`resume` → `adapter.resume_session`、回 `resumed{ack: sess.inbox.last}`；其他 type → `error{code:"protocol"}`。握手阶段的 `AdapterError` → 发送 `error{code: exc.code}` 后以 1011 关闭。随后并行运行读取和写出两个协程。读取协程不断调用 `adapter.receive(...)`；抛 `AdapterError` 时发送 `error`，以 `"protocol_error"` 关闭会话。写出协程从对方的 `ack` 之后开始，依次写出 `sess.outbox.after(...)` 的帧，写出时把头里的 `ack` 填为 `sess.inbox.last`；没有新帧时等 `outbox.ready` 或 `link`。`link` 被置位后分三种情况：（a）会话仍然打开（说明被新连接取代）→ 立即停止，以 4001 关闭；（b）会话已关闭且 `failure` 非空 → 发送 `error{code:"model_error", error: failure}`，以 1011 关闭；（c）会话已关闭且 `failure` 为空 → 先写完剩余的帧（包括 `closed`），再以 1000 关闭。对方断开时两个协程都停止。无论哪种退出，最后都调用 `adapter.detach(sess, link)`。
+  - `WS /session`：先用 `token_ok(websocket)` 校验，失败以 1008 关闭；accept 后读第一帧，`open` → `adapter.open_session`、回 `opened`；`resume` → `adapter.resume_session`、回 `resumed{ack: sess.inbox.last}`；其他 type → `error{code:"protocol"}`。握手阶段的 `AdapterError` → 发送 `error{code: exc.code}` 后以 1011 关闭；其他异常（比如 `prepare` 显存不足）记日志，发送 `error{code:"model_error"}` 后同样以 1011 关闭——连接不带关闭帧就断开的话，客户端只能报 `model_unreachable`。随后并行运行读取和写出两个协程。读取协程不断调用 `adapter.receive(...)`；抛 `AdapterError` 时发送 `error`，以 `"protocol_error"` 关闭会话。写出协程从对方的 `ack` 之后开始，依次写出 `sess.outbox.after(...)` 的帧，写出时把头里的 `ack` 填为 `sess.inbox.last`；没有新帧时等 `outbox.ready` 或 `link`。`link` 被置位后分三种情况：（a）会话仍然打开（说明被新连接取代）→ 立即停止，以 4001 关闭；（b）会话已关闭且 `failure` 非空 → 发送 `error{code:"model_error", error: failure}`，以 1011 关闭；（c）会话已关闭且 `failure` 为空 → 先写完剩余的帧（包括 `closed`），再以 1000 关闭。对方断开时两个协程都停止。无论哪种退出，最后都调用 `adapter.detach(sess, link)`。
   - `uvicorn.run(..., ws_ping_interval=5.0, ws_ping_timeout=5.0, ws_max_size=wire.MAX_FRAME_BYTES)`。
 
 - [ ] **Step 1: 写失败测试**（用 FastAPI `TestClient.websocket_connect("/session", headers=...)`，配合 `send_bytes` / `receive_bytes`；adapter 用 `omni_adapter()`，并 patch `_build_adapter`）：
@@ -276,7 +276,7 @@
 - 实现 Task 2 的全部 port 方法。`send_video_segment` 直接抛 `ValueError("this model server does not accept video segments")`：服务端声明 `video_segments=False`，host 不会调用它。
 - `next_event` 取走一条 `ModelOutputStep` 时，执行 `consumed += 1` 并唤醒写出协程（让它发一条 `state`）。
 - `link_up: bool`；`on_link_change: Callable[[bool], Awaitable[None]] | None`（由网页会话设置；调用时出现的异常不能影响连接管理）。
-- 连接管理按 D6 实现，使用常量 `RECONNECT_DEADLINE_S`、`RECONNECT_DELAYS_S`、`CLOSE_TIMEOUT_S`。`connect(..., additional_headers=…, proxy=None, open_timeout=10, ping_interval=5, ping_timeout=5, max_size=wire.MAX_FRAME_BYTES)`。
+- 连接管理按 D6 实现，使用常量 `RECONNECT_DEADLINE_S`、`RECONNECT_DELAYS_S`、`CLOSE_TIMEOUT_S`。`connect(..., additional_headers=…, proxy=None, open_timeout=10, ping_interval=5, ping_timeout=5, close_timeout=1, max_size=wire.MAX_FRAME_BYTES)`。`close_timeout=1`：ping 没有回音之后，websockets 还要等对端回应关闭握手，默认等 10 s；沉默的链路不会回应，所以只等 1 s，断线约 10 s 内就能发现（D6）。
 - 错误映射：握手收到 `model_busy` 或 `model_mismatch` → `RemoteModelUnavailable(同名 code)`；open 时连不上 → `model_unreachable`；会话中收到 `session_lost`、超过重连期限、重放缓冲溢出 → `model_link_lost`；以 1008 关闭 → `RemoteServingError("model server rejected VENUS_MODEL_TOKEN")`；其他 `error` → `RemoteServingError(error)`。`close_session` 之后，`next_event` 抛 `RemoteSessionClosed`。
 - 到达间隔统计：记录每条 `output` 到达的单调时钟时间。`aclose()` 时在 `demos.model.client` logger 上以 INFO 输出一行：`model output gaps: steps <summary> speech <summary>`。summary 用 `StepStats.summary()`；"speech" 只统计同一 `generation_id` 内、相邻两条带音频输出之间的间隔。
 
@@ -308,7 +308,7 @@
   - `i18n.js`（中/英）：
     - `modelReconnecting`：「与模型服务器的连接中断，正在重连；这段时间你说的话模型听不到。」/ "Lost the connection to the model server; reconnecting. The model can't hear you until it's back."
     - `modelReconnected`：「已重新连接模型服务器。」/ "Reconnected to the model server."
-    - `modelLinkLost`：「与模型服务器的连接中断超过 45 秒，本次会话已结束，请重新开始。」/ "The connection to the model server was down for more than 45 seconds, so this conversation ended. Start a new one."
+    - `modelLinkLost`：「与模型服务器的连接中断，无法接回本次会话，请重新开始。」/ "The connection to the model server was lost and this conversation could not be resumed. Start a new one."
     - `modelBusy` 改为：「模型正被另一个连接使用。如果刚重启过网页服务，请约 10 秒后重试。」/ "The model is in use by another connection. If you just restarted the web service, try again in about 10 seconds."
 
 - [ ] **Step 1: 写失败测试：**
