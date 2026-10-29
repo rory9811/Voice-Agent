@@ -159,6 +159,7 @@ class _Session:
         "prefill_request",
         "link",
         "expiry",
+        "closing",
         "failure",
     )
 
@@ -190,6 +191,7 @@ class _Session:
         self.prefill_request: dict[str, str] | None = None
         self.link: asyncio.Event | None = None  # set() tells the attached connection to stop
         self.expiry: asyncio.Task | None = None
+        self.closing: asyncio.Task | None = None  # the one close; closed is set with it
         self.failure: str | None = None
 
 
@@ -238,7 +240,6 @@ class RealtimeVenusOmniAdapter:
         self._generation_options: dict[str, Any] = {}
         self._session: _Session | None = None
         self._open_lock = asyncio.Lock()
-        self._closers: set[asyncio.Task] = set()  # keeps scheduled closes referenced
         self._steps = StepStats()
         self._memory_after_load: dict[str, int] | None = None
         self._wakeup = asyncio.Event()
@@ -334,11 +335,15 @@ class RealtimeVenusOmniAdapter:
             raise AdapterError(str(exc)) from exc
         async with self._open_lock:
             old = self._session
-            if old is not None and not old.closed:
-                if old.link is not None:
-                    raise SessionBusy("a session is already open; max_sessions=1")
-                # Its client is gone (e.g. the web server restarted): give up the slot.
-                await self._close_locked(old, "replaced")
+            if old is not None:
+                if not old.closed:
+                    if old.link is not None:
+                        raise SessionBusy("a session is already open; max_sessions=1")
+                    # Its client is gone (e.g. the web server restarted): give up the slot.
+                    self._begin_close(old, "replaced")
+                # Never prepare while the old close, maybe started by a caller since
+                # cancelled, still has a model step or the teardown running.
+                await asyncio.shield(old.closing)
             incarnation = (self._session.incarnation + 1) if self._session else 1
             sess = _Session(session_id, incarnation, model)
             sess.link = link
@@ -441,11 +446,10 @@ class RealtimeVenusOmniAdapter:
 
     async def _expire(self, sess: _Session) -> None:
         await asyncio.sleep(RESUME_WINDOW_S)
-        async with self._open_lock:
-            # A resume holds this lock and would have cancelled us. Clear the
-            # field so _close_locked does not cancel this very task.
-            sess.expiry = None
-            await self._close_locked(sess, "link_lost")
+        # Nothing awaits between the sleep and this point, so a resume either
+        # cancelled the sleep or will find the session closed.
+        sess.expiry = None
+        self._begin_close(sess, "link_lost")
 
     def receive(self, sess: _Session, header: dict[str, Any], payload: bytes) -> None:
         """Apply one client frame. Never awaits: an input and its ack are one step."""
@@ -487,7 +491,7 @@ class RealtimeVenusOmniAdapter:
                 raise AdapterError("playback acknowledgement moved backwards")
             sess.ack_chunks[utterance_id] = cumulative
         elif kind == "close":
-            self._spawn_close(sess, "client_close")
+            self._begin_close(sess, "client_close")
         self._wakeup.set()
 
     @staticmethod
@@ -532,31 +536,39 @@ class RealtimeVenusOmniAdapter:
             raise AdapterError("a backend prefill is already waiting to be applied")
         sess.prefill_request = {"work_id": work_id, "attempt_id": attempt_id, "text": text}
 
-    def _spawn_close(self, sess: _Session, reason: str) -> None:
-        task = asyncio.create_task(self.close_session(sess, reason))
-        self._closers.add(task)
-        task.add_done_callback(self._closers.discard)
-
     async def close_session(self, sess: _Session, reason: str) -> None:
-        async with self._open_lock:
-            await self._close_locked(sess, reason)
+        # Shielded: a cancelled caller must not stop the close halfway, and a
+        # later caller waits for that same close to finish.
+        await asyncio.shield(self._begin_close(sess, reason))
 
-    async def _close_locked(self, sess: _Session, reason: str) -> None:
-        """Close ``sess``; the caller holds ``_open_lock`` so no open races the teardown."""
-        if sess.closed:
-            return
-        sess.closed = True
-        if sess.expiry is not None:
-            sess.expiry.cancel()
-            sess.expiry = None
-        stop_fn = getattr(self._official, "set_session_stop", None)
-        if callable(stop_fn):
-            stop_fn()
+    def _begin_close(self, sess: _Session, reason: str) -> asyncio.Task:
+        """Start closing ``sess`` once; every caller gets the same close task."""
+        if sess.closing is None:
+            sess.closed = True
+            if sess.expiry is not None:
+                sess.expiry.cancel()
+                sess.expiry = None
+            sess.closing = asyncio.create_task(
+                self._finish_close(sess, reason), name=f"adapter-close:{sess.session_id}"
+            )
+        return sess.closing
+
+    async def _finish_close(self, sess: _Session, reason: str) -> None:
+        """Never raises: the connection must always learn how the session ended."""
+        try:
+            stop_fn = getattr(self._official, "set_session_stop", None)
+            if callable(stop_fn):
+                stop_fn()
+        except Exception as exc:  # noqa: BLE001 - the close must still finish
+            self._close_failed(sess, exc)
         # Cancelling would not stop a step running in its thread; wait for the
         # driver to return before destroying the KV it is using.
         if sess.driver is not None:
             await asyncio.wait([sess.driver])
-        await asyncio.to_thread(self._teardown_model)
+        try:
+            await asyncio.to_thread(self._teardown_model)
+        except Exception as exc:  # noqa: BLE001 - the close must still finish
+            self._close_failed(sess, exc)
         if sess.failure is None:
             sess.outbox.push(
                 sw.session_closed(
@@ -568,6 +580,12 @@ class RealtimeVenusOmniAdapter:
         if sess.link is not None:
             sess.link.set()
         _LOG.info("close_session %s reason=%s", sess.session_id, reason)
+
+    @staticmethod
+    def _close_failed(sess: _Session, exc: Exception) -> None:
+        _LOG.error("closing session %s failed", sess.session_id, exc_info=exc)
+        if sess.failure is None:
+            sess.failure = f"{type(exc).__name__}: {exc}"
 
     def _teardown_model(self) -> None:
         as_simplex = getattr(self._model, "as_simplex", None)
@@ -626,8 +644,8 @@ class RealtimeVenusOmniAdapter:
             # A step the stop request interrupted is the close itself, not a failure.
             if not sess.closed:
                 sess.failure = f"{type(exc).__name__}: {exc}"
-                # close_session waits for this task to end, so it cannot be awaited here.
-                self._spawn_close(sess, "model_error")
+                # The close waits for this task to end, so it cannot be awaited here.
+                self._begin_close(sess, "model_error")
 
     async def _apply_prefill(self, sess: _Session) -> None:
         request = sess.prefill_request

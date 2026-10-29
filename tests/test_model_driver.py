@@ -1,7 +1,8 @@
 import asyncio
+import gc
 import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 
@@ -150,6 +151,64 @@ class DriverTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(self.link.wait(), 2)
         self.assertTrue(self.sess.closed)
         self.assertEqual(self.sent()[-1]["type"], "closed")
+
+    async def test_cancelled_close_still_finishes(self):
+        entered, gate = threading.Event(), threading.Event()
+
+        def slow_step(**_):  # a step that ignores the stop request for a while
+            entered.set()
+            gate.wait(5)
+            return SPEAK
+
+        events = []
+        teardown, prepare = self.adapter._teardown_model, self.adapter._prepare_for_session
+        self.adapter._teardown_model = lambda: (events.append("teardown"), teardown())
+        self.adapter._prepare_for_session = lambda *a: (
+            events.append(("prepare", self.sess.driver.done())), prepare(*a))
+        self.adapter._model.streaming_generate.side_effect = slow_step
+        self.audio()
+        await until(entered.is_set)
+        closer = asyncio.create_task(self.adapter.close_session(self.sess, "protocol_error"))
+        await asyncio.sleep(0.05)
+        closer.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await closer
+        opener = asyncio.create_task(self.adapter.open_session(open_request("B"), asyncio.Event()))
+        await asyncio.sleep(0.05)
+        self.assertEqual(events, [])
+        self.assertFalse(opener.done())
+        gate.set()
+        b, _ = await asyncio.wait_for(opener, 2)
+        await self.adapter.close_session(self.sess, "again")
+        self.assertEqual(events[:2], ["teardown", ("prepare", True)])
+        self.assertTrue(self.link.is_set())
+        self.assertEqual(self.sent()[-1]["type"], "closed")
+        await self.adapter.close_session(b, "test_end")
+        self.assertEqual(events.count("teardown"), 2)  # once per session
+
+    async def close_by_frame_with(self, broken_part):
+        loop_errors = []
+        asyncio.get_running_loop().set_exception_handler(
+            lambda _loop, context: loop_errors.append(context["message"]))
+        with self.assertLogs("demos.model.adapter", "ERROR"):
+            self.send("close", reason="client_close")
+            await asyncio.wait_for(self.link.wait(), 2)
+        gc.collect()
+        await asyncio.sleep(0)
+        self.assertEqual(self.sess.failure, f"RuntimeError: {broken_part} broke")
+        self.assertEqual(self.sent("closed"), [])
+        self.assertEqual(loop_errors, [])
+
+    async def test_failed_teardown_still_releases_the_connection(self):
+        self.adapter._teardown_model = MagicMock(side_effect=RuntimeError("teardown broke"))
+        await self.close_by_frame_with("teardown")
+
+    async def test_failed_stop_still_waits_and_tears_down(self):
+        model = self.adapter._model
+        self.adapter._official.set_session_stop.side_effect = RuntimeError("stop broke")
+        await self.close_by_frame_with("stop")
+        self.assertTrue(self.sess.driver.done())
+        model.as_simplex.assert_called_once()
 
     async def test_model_error_closes_without_a_closed_frame(self):
         self.adapter._model.streaming_generate.side_effect = RuntimeError("boom")
