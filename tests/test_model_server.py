@@ -1,13 +1,16 @@
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from demos.model.adapter import PROTOCOL_TOKENS, RealtimeVenusOmniAdapter
 from demos.model.server import _ServerConfig, create_app
+from demos.model.wire import PROTOCOL_VERSION, decode_frame, encode_frame
 
 
 def omni_adapter():
@@ -40,6 +43,138 @@ class ServerDescriptionTests(unittest.TestCase):
             self.assertEqual(files["vocab.json"], "content of vocab.json")
             self.assertEqual(health["model_type"], "audio")
             self.assertEqual(health["model"], "Realtime-Venus-Audio")
+
+
+def open_frame(session_id="A", model="Realtime-Venus-Omni"):
+    return encode_frame({"type": "open", "protocol_version": PROTOCOL_VERSION, "session_id": session_id,
+                         "model": model, "ack": 0, "consumed": 0})
+
+
+def resume_frame(opened, ack=0):
+    return encode_frame({"type": "resume", "session_id": opened["session_id"],
+                         "incarnation": opened["incarnation"], "ack": ack, "consumed": 0})
+
+
+def audio_frame(seq, event_seq):
+    # A tenth of a second: acknowledged, but too short for the model to step.
+    return encode_frame({"type": "audio", "seq": seq, "ack": 0, "consumed": 0, "event_seq": event_seq,
+                         "sample_rate_hz": 16_000}, b"\0\0" * 1600)
+
+
+CLOSE = encode_frame({"type": "close", "seq": 1, "ack": 0, "consumed": 0, "reason": "done"})
+
+
+def receive(ws):
+    return decode_frame(ws.receive_bytes())[0]
+
+
+class SessionSocketTests(unittest.TestCase):
+    @contextmanager
+    def client(self, token=None):
+        self.adapter = omni_adapter()
+        with patch("demos.model.server._build_adapter", AsyncMock(return_value=self.adapter)):
+            with TestClient(create_app(_ServerConfig(token=token))) as client:
+                yield client
+
+    @staticmethod
+    def connect(client, token=None):
+        headers = {} if token is None else {"Authorization": f"Bearer {token}"}
+        return client.websocket_connect("/session", headers=headers)
+
+    def open(self, ws):
+        ws.send_bytes(open_frame())
+        opened = receive(ws)
+        self.assertEqual(opened["type"], "opened")
+        return opened
+
+    def assertClosed(self, ws, code):
+        with self.assertRaises(WebSocketDisconnect) as caught:
+            ws.receive_bytes()
+        self.assertEqual(caught.exception.code, code)
+
+    def test_session_socket_requires_token(self):
+        with self.client(token="secret") as client:
+            for token in (None, "wrong"):
+                with self.subTest(token=token), self.connect(client, token) as ws:
+                    self.assertClosed(ws, 1008)
+            with self.connect(client, "secret") as ws:
+                self.open(ws)
+
+    def test_open_returns_capabilities_and_acks_input(self):
+        with self.client() as client, self.connect(client) as ws:
+            opened = self.open(ws)
+            self.assertEqual(opened["incarnation"], 1)
+            self.assertEqual(opened["capabilities"]["raw_token_mode"], "delta")
+            ws.send_bytes(audio_frame(seq=1, event_seq=1))
+            accepted = receive(ws)
+            self.assertEqual(accepted["type"], "input_accepted")
+            self.assertEqual((accepted["seq"], accepted["ack"], accepted["input_seq"]), (1, 1, 1))
+
+    def test_resume_replays_unconfirmed_frames(self):
+        with self.client() as client:
+            with self.connect(client) as a:
+                opened = self.open(a)
+                a.send_bytes(audio_frame(seq=1, event_seq=1))
+                self.assertEqual(receive(a)["seq"], 1)
+            with self.connect(client) as b:
+                b.send_bytes(resume_frame(opened, ack=0))
+                self.assertEqual(receive(b), {"type": "resumed", "ack": 1})
+                replayed = receive(b)
+                self.assertEqual((replayed["type"], replayed["seq"]), ("input_accepted", 1))
+
+    def test_resume_supersedes_a_live_connection(self):
+        with self.client() as client, self.connect(client) as a:
+            opened = self.open(a)
+            with self.connect(client) as b:
+                b.send_bytes(resume_frame(opened))
+                self.assertEqual(receive(b)["type"], "resumed")
+                self.assertClosed(a, 4001)
+
+    def test_handshake_errors_are_coded(self):
+        with self.client() as client:
+            with self.connect(client) as ws:
+                ws.send_bytes(open_frame(model="Realtime-Venus-Audio"))
+                self.assertEqual(receive(ws)["code"], "model_mismatch")
+                self.assertClosed(ws, 1011)
+            with self.connect(client) as a:
+                self.open(a)
+                with self.connect(client) as b:
+                    b.send_bytes(open_frame(session_id="B"))
+                    self.assertEqual(receive(b)["code"], "model_busy")
+            with self.connect(client) as ws:
+                ws.send_bytes(resume_frame({"session_id": "gone", "incarnation": 9}))
+                self.assertEqual(receive(ws)["code"], "session_lost")
+
+    def test_client_close_drains_then_ends_normally(self):
+        with self.client() as client, self.connect(client) as ws:
+            self.open(ws)
+            ws.send_bytes(CLOSE)
+            self.assertEqual(receive(ws)["type"], "closed")
+            self.assertClosed(ws, 1000)
+
+    def test_failed_close_reports_model_error(self):
+        with self.client() as client, self.connect(client) as ws:
+            self.open(ws)
+            self.adapter._official.set_session_stop.side_effect = RuntimeError("stop failed")
+            ws.send_bytes(CLOSE)
+            error = receive(ws)
+            self.assertEqual((error["type"], error["code"]), ("error", "model_error"))
+            self.assertIn("stop failed", error["error"])
+            self.assertClosed(ws, 1011)
+
+    def test_protocol_error_ends_the_session(self):
+        with self.client() as client:
+            with self.connect(client) as ws:
+                self.open(ws)
+                ws.send_bytes(audio_frame(seq=1, event_seq=2))  # event_seq must start at 1
+                self.assertEqual(receive(ws)["code"], "protocol")
+                self.assertClosed(ws, 1011)
+            with self.connect(client) as ws:
+                ws.send_bytes(b"\0")  # shorter than the length prefix
+                self.assertEqual(receive(ws)["code"], "protocol")
+                self.assertClosed(ws, 1011)
+            with self.connect(client) as ws:
+                self.open(ws)  # the broken session gave up the model
 
 
 if __name__ == "__main__":

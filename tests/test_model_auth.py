@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from demos.model.server import _ServerConfig, _parse_args, create_app
 from demos.model.settings import require_token
+from demos.model.wire import PROTOCOL_VERSION
 from test_model_server import omni_adapter
 
 
@@ -57,6 +58,10 @@ class ServerAuthTests(unittest.TestCase):
             self.assertTrue(client.get("/healthz", headers=bearer("secret")).json()["token_ok"])
         with self.client(None) as client:
             self.assertTrue(client.get("/healthz").json()["token_ok"])
+
+    def test_health_reports_protocol_version(self):
+        with self.client(None) as client:
+            self.assertEqual(client.get("/healthz").json()["protocol_version"], PROTOCOL_VERSION)
 
 
 class HealthPrivacyTests(unittest.IsolatedAsyncioTestCase):

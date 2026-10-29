@@ -1,8 +1,9 @@
-"""HTTP API for the Realtime-Venus-Omni duplex model."""
+"""HTTP and WebSocket API for the Realtime-Venus-Omni duplex model."""
 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import secrets
 from contextlib import asynccontextmanager
@@ -10,10 +11,12 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.requests import HTTPConnection
 from fastapi.responses import JSONResponse
 
-from demos.model.adapter import ModelNotLoaded, RealtimeVenusOmniAdapter
+from demos.model import wire
+from demos.model.adapter import AdapterError, ModelNotLoaded, RealtimeVenusOmniAdapter, _Session
 from demos.model.checkpoint import checked_file, checkpoint_directory
 from demos.model.prompts import REALTIME_VENUS_SYSTEM_PROMPT
 from demos.model.settings import TOKEN_ENV, model_token, require_token
@@ -62,6 +65,109 @@ async def _build_adapter(config: _ServerConfig) -> RealtimeVenusOmniAdapter:
     )
 
 
+def _error(code: str, message: str) -> bytes:
+    return wire.encode_frame({"type": "error", "code": code, "error": message})
+
+
+async def _receive(ws: WebSocket) -> tuple[dict[str, Any], bytes]:
+    message = await ws.receive()
+    if message["type"] == "websocket.disconnect":
+        raise WebSocketDisconnect(message.get("code", 1000))
+    if message.get("bytes") is None:
+        raise AdapterError("frames must be binary")
+    try:
+        return wire.decode_frame(message["bytes"])
+    except wire.FrameError as exc:
+        raise AdapterError(str(exc)) from exc
+
+
+async def _read(
+    ws: WebSocket, adapter: RealtimeVenusOmniAdapter, sess: _Session
+) -> AdapterError | None:
+    """Apply client frames until the peer leaves (None) or breaks the protocol."""
+    try:
+        while True:
+            header, payload = await _receive(ws)
+            adapter.receive(sess, header, payload)
+    except WebSocketDisconnect:
+        return None
+    except AdapterError as exc:
+        return exc
+
+
+async def _write(
+    ws: WebSocket, sess: _Session, link: asyncio.Event, sent: int, reader: asyncio.Task
+) -> int | None:
+    """Send the outbox after ``sent``; the close code once ``link`` is set.
+
+    None once ``reader`` has ended.
+    """
+    outbox = sess.outbox
+    while not reader.done():
+        if link.is_set() and sess.link is not link:
+            return 4001  # a resume moved the session to a newer connection
+        if link.is_set() and sess.failure is not None:
+            await ws.send_bytes(_error("model_error", sess.failure))
+            return 1011
+        frames = outbox.after(sent)
+        if frames:
+            header, payload = frames[0]
+            # A copy: the outbox keeps the header for a replay on a later connection.
+            await ws.send_bytes(wire.encode_frame({**header, "ack": sess.inbox.last}, payload))
+            sent = header["seq"]
+        elif link.is_set():
+            return 1000  # closed, and every frame up to ``closed`` is written
+        else:
+            outbox.ready.clear()
+            waits = [asyncio.ensure_future(outbox.ready.wait()), asyncio.ensure_future(link.wait())]
+            try:
+                await asyncio.wait([*waits, reader], return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for wait in waits:
+                    wait.cancel()
+    return None
+
+
+async def _serve_session(ws: WebSocket, adapter: RealtimeVenusOmniAdapter) -> None:
+    link = asyncio.Event()  # the adapter sets it when this connection must stop
+    try:
+        header, _ = await _receive(ws)
+        if header["type"] == "open":
+            sess, reply = await adapter.open_session(header, link)
+            sent = 0
+        elif header["type"] == "resume":
+            sess = await adapter.resume_session(
+                header.get("session_id"),
+                header.get("incarnation"),
+                ack=header.get("ack"),
+                consumed=header.get("consumed"),
+                link=link,
+            )
+            reply, sent = {"type": "resumed"}, header["ack"]
+        else:
+            raise AdapterError(f"the first frame must be open or resume, got {header['type']!r}")
+    except AdapterError as exc:
+        await ws.send_bytes(_error(exc.code, str(exc)))
+        await ws.close(1011)
+        return
+    try:
+        await ws.send_bytes(wire.encode_frame({**reply, "ack": sess.inbox.last}))
+        # Only this coroutine sends; the reader task only receives.
+        reader = asyncio.create_task(_read(ws, adapter, sess))
+        try:
+            code = await _write(ws, sess, link, sent, reader)
+        finally:
+            reader.cancel()
+        if code is not None:
+            await ws.close(code)
+        elif (exc := reader.result()) is not None:
+            await ws.send_bytes(_error(exc.code, str(exc)))
+            await adapter.close_session(sess, "protocol_error")
+            await ws.close(1011)
+    finally:
+        adapter.detach(sess, link)
+
+
 def create_app(config: _ServerConfig) -> FastAPI:
     """Construct the FastAPI app; the adapter is loaded in the lifespan."""
 
@@ -91,7 +197,7 @@ def create_app(config: _ServerConfig) -> FastAPI:
         lifespan=lifespan,
     )
 
-    def token_ok(request: Request) -> bool:
+    def token_ok(request: HTTPConnection) -> bool:
         if config.token is None:
             return True
         supplied = request.headers.get("authorization", "").encode()
@@ -124,8 +230,22 @@ def create_app(config: _ServerConfig) -> FastAPI:
             "model_type": config.model_type,
             "model": config.model_name,
             "token_ok": token_ok(request),
+            "protocol_version": wire.PROTOCOL_VERSION,
             **h,
         }
+
+    @app.websocket("/session")
+    async def session(ws: WebSocket):
+        # The http middleware does not see WebSockets. Accept first: a close
+        # before accept reaches the client as an HTTP 403, not as code 1008.
+        await ws.accept()
+        try:
+            if not token_ok(ws):
+                await ws.close(1008)
+                return
+            await _serve_session(ws, adapter())
+        except WebSocketDisconnect:
+            pass  # the peer left; a session it held waits for a resume
 
     @app.get("/stats")
     async def stats():
@@ -232,7 +352,15 @@ def main(argv: list[str] | None = None) -> None:
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
     app = create_app(config)
-    uvicorn.run(app, host=config.host, port=config.port, log_level=config.log_level)
+    uvicorn.run(
+        app,
+        host=config.host,
+        port=config.port,
+        log_level=config.log_level,
+        ws_ping_interval=5.0,
+        ws_ping_timeout=5.0,
+        ws_max_size=wire.MAX_FRAME_BYTES,
+    )
 
 
 if __name__ == "__main__":
