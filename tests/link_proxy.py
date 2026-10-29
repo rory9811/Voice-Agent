@@ -51,6 +51,7 @@ class LatencyProxy:
         self._delay_s = one_way_ms / 1000
         self._refuse_until = 0.0
         self._transports: set[asyncio.Transport] = set()
+        self._held: set[asyncio.Transport] = set()
         self._tasks: set[asyncio.Task] = set()
         self._server: asyncio.Server | None = None
 
@@ -62,6 +63,10 @@ class LatencyProxy:
         """Kill every live connection without a close handshake, as aTrust does."""
         for transport in list(self._transports):
             transport.abort()
+
+    def hold(self) -> None:
+        """Forward nothing more, not even a close, on the live connections: a link gone silent."""
+        self._held.update(self._transports)
 
     def refuse_for(self, seconds: float) -> None:
         """Close new connections right after accepting them for ``seconds``."""
@@ -111,9 +116,11 @@ class LatencyProxy:
             while (item := await chunks.get()) is not None:
                 due, data = item
                 await asyncio.sleep(max(0.0, due - loop.time()))
-                writer.write(data)
-                await writer.drain()
-            writer.write_eof()
+                if writer.transport not in self._held:
+                    writer.write(data)
+                    await writer.drain()
+            if writer.transport not in self._held:
+                writer.write_eof()
 
         delivery = asyncio.create_task(deliver())
         try:

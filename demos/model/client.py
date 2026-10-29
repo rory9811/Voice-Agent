@@ -207,8 +207,8 @@ class RemoteOmniServingPort:
     async def close_session(self, request: CloseSession) -> SessionClosed:
         if self._end is not None:
             raise self._end
-        self._closed = asyncio.get_running_loop().create_future()
         self._send(_header("close", request))
+        self._closed = asyncio.get_running_loop().create_future()
         self._stop(RemoteSessionClosed("the model session is closed"))
         limit = self._timeout_s if self.link_up else CLOSE_TIMEOUT_S
         try:
@@ -277,6 +277,8 @@ class RemoteOmniServingPort:
             open_timeout=10,
             ping_interval=5,
             ping_timeout=5,
+            # After an unanswered ping a silent peer will not answer the close either.
+            close_timeout=1,
             max_size=wire.MAX_FRAME_BYTES,
         )
         try:

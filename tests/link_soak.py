@@ -186,6 +186,17 @@ class LinkSoakTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(resumed_s, OUTAGE_S + 4)
         self.assertEqual(self.link_changes, [False, True])
 
+    async def test_silent_link_is_noticed_within_eleven_seconds(self):
+        # D6: the next ping within 5 s, 5 s for its pong, then 1 s for the close.
+        started = time.monotonic()
+        self.proxy.hold()
+        async with asyncio.timeout(30):
+            while False not in self.link_changes:
+                await asyncio.sleep(0.05)
+        noticed_s = time.monotonic() - started
+        print(f"\nsilent link noticed after {noticed_s:.1f} s")
+        self.assertLessEqual(noticed_s, 11.5)
+
 
 if __name__ == "__main__":
     unittest.main()
