@@ -21,7 +21,7 @@ The selected frontend handles streaming media and speech in the **interaction lo
 | Harness + Codex | Embedded task execution, progress, and result delivery. | [`server/resources.py`](server/resources.py), [Harness](../harness/README.md#architecture) |
 | Containers and settings | Images, startup and saved configuration. | [`deploy/`](../deploy/), [`settings.py`](settings.py) |
 
-The model service runs on a GPU server; every other component runs on your computer and talks to the model over the network (for example a company VPN).
+The model service runs on a GPU server; every other component runs on your computer and talks to the model over the network (for example a company VPN), through one WebSocket (`/session`); `/healthz`, `/tokenizer` and `/stats` stay plain HTTP.
 
 <p align="center"><img src="../assets/experience-en.png" width="100%" alt="Realtime-Venus browser demo" /><br /><sub>The browser is the entry point for live media, task progress, and result downloads.</sub></p>
 
@@ -113,7 +113,7 @@ The model serves **one active conversation**. After the web service disconnects,
 | `MODEL_PORT` | `8031` | Port your computer uses to reach the model. |
 | `MEMORY_MINUTES` | `40` | Omni video memory in minutes; unused by Audio. |
 | `GPU_DEVICE` | `0` | GPU index. |
-| `VENUS_MODEL_TOKEN` | — (required) | Shared secret; every request except `/healthz` must carry it. |
+| `VENUS_MODEL_TOKEN` | — (required) | Shared secret; every request except `/healthz`, including the WebSocket handshake, must carry it. |
 | `PYTHON_IMAGE` / `PIP_INDEX_URL` | `python:3.11.18-slim-trixie@sha256:6737…` / PyPI | Base image and package index for the build; point them at mirrors if needed. |
 
 **Web service** (`deploy/web/.env`):

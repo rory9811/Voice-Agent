@@ -21,7 +21,7 @@
 | Harness + Codex | 嵌入网页服务，执行任务、跟踪进度并回传结果。 | [`server/resources.py`](server/resources.py)、[Harness](../harness/README_ZH.md#架构) |
 | 容器与配置 | 镜像、启动与配置持久化。 | [`deploy/`](../deploy/)、[`settings.py`](settings.py) |
 
-模型服务跑在 GPU 服务器上，其余组件都跑在你的电脑上，通过网络（例如公司 VPN）与模型通信。
+模型服务跑在 GPU 服务器上，其余组件都跑在你的电脑上，通过网络（例如公司 VPN）与模型通信：模型接口是一条 WebSocket（`/session`），另有 `/healthz`、`/tokenizer`、`/stats` 三个 HTTP 接口。
 
 <p align="center"><img src="../assets/experience-zh.png" width="100%" alt="Realtime-Venus 网页体验界面" /><br /><sub>浏览器统一承载实时媒体、任务进度和结果下载。</sub></p>
 
@@ -112,7 +112,7 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 | `MODEL_PORT` | `8031` | 你的电脑访问模型时用的端口。 |
 | `MEMORY_MINUTES` | `40` | Omni 视频记忆时长（分钟）；Audio 不使用。 |
 | `GPU_DEVICE` | `0` | 使用哪块 GPU。 |
-| `VENUS_MODEL_TOKEN` | —（必填） | 共享密钥；除 `/healthz` 外的每个请求都必须带上它。 |
+| `VENUS_MODEL_TOKEN` | —（必填） | 共享密钥；除 `/healthz` 外的每个请求（包括 WebSocket 握手）都必须带上它。 |
 | `PYTHON_IMAGE` / `PIP_INDEX_URL` | `python:3.11.18-slim-trixie@sha256:6737…` / PyPI | 构建用的基础镜像和包索引；需要时改成镜像源。 |
 
 **网页服务**（`deploy/web/.env`）：
