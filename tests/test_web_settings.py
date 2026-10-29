@@ -81,7 +81,17 @@ class WebCommandTests(unittest.TestCase):
             fetch.return_value = MagicMock(model_type='omni', tokenizer='tok')
             cli.main()
         self.assertEqual(create.call_args.kwargs['model_timeout_s'], 42)
+        self.assertEqual(create.call_args.kwargs['public_hosts'], [])
         self.assertNotIn('demo_path', create.call_args.kwargs)
+
+    def test_public_host_reaches_the_app(self):
+        from demos.server import cli
+        argv = ['cli', '--model-server', 'http://10.0.0.1:8031', '--config', '/data/harness.json', '--public-host', '10.194.99.8']
+        with patch.object(sys, 'argv', argv), patch('demos.server.cli.fetch_model') as fetch, \
+                patch('demos.server.cli.create_app') as create, patch('demos.server.cli.uvicorn.run'):
+            fetch.return_value = MagicMock(model_type='omni', tokenizer='tok')
+            cli.main()
+        self.assertEqual(create.call_args.kwargs['public_hosts'], ['10.194.99.8'])
 
 
 if __name__ == "__main__":

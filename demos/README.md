@@ -82,6 +82,8 @@ Each side is a Docker Compose project configured by the `.env` file next to its 
 
 **Both on one machine:** inside the web container `127.0.0.1` is the container itself, so set `MODEL_URL` to `http://host.docker.internal:8031` (Docker Desktop) or the machine's own address.
 
+**Opening the page from another computer** (for example with the web service on the GPU server too): in `deploy/web/.env`, set `PUBLIC_HOST` to the server's address (such as `10.194.99.8`) and `WEB_BIND_IP` to `0.0.0.0`, then open `http://10.194.99.8:<WEB_PORT>`. The page has no login, so anyone who can reach that address and port can use it. Browsers allow camera and microphone only on localhost or HTTPS, so for a plain `http://` IP address, add it under Chrome's `chrome://flags/#unsafely-treat-insecure-origin-as-secure` and restart the browser.
+
 ## Open on your computer
 
 Open **[http://localhost:8032](http://localhost:8032)** and start a conversation.
@@ -95,9 +97,9 @@ Open **[http://localhost:8032](http://localhost:8032)** and start a conversation
 
 The side panel provides task progress, cancellation, and artifact downloads.
 
-The model serves **one active conversation**. If the web service stops without closing it (crash, network loss), the model frees the slot after 15 seconds without requests. The page is published on `127.0.0.1` only, which browsers trust for camera and microphone.
+The model serves **one active conversation**. If the web service stops without closing it (crash, network loss), the model frees the slot after 15 seconds without requests. By default the page is published on `127.0.0.1` only, which browsers trust for camera and microphone.
 
-**Latency.** Each second of conversation makes about three sequential requests to the model plus one output pull, all over the network. Round trips up to about 100 ms feel like a single-machine setup; above about 200 ms replies slow down and input can back up. Check from your computer with `curl -s -o /dev/null -w '%{time_total}\n' http://10.194.99.8:8031/healthz`, using your `MODEL_URL`.
+**Latency.** Each second of conversation makes about three sequential requests to the model plus one output pull, all over the network. Round trips up to about 100 ms feel like a single-machine setup; above about 200 ms replies slow down and input can back up. Check from your computer with `curl -s -o /dev/null -w '%{time_total}\n' http://10.194.99.8:8031/healthz`, using your `MODEL_URL`. When round trips are slow, run the web service on the GPU server as well and open it from your computer (see above); model requests then stay off the network.
 
 ## Configuration
 
@@ -122,7 +124,9 @@ The model serves **one active conversation**. If the web service stops without c
 | --- | --- | --- |
 | `MODEL_URL` | — (required) | Model server address, for example `http://10.194.99.8:8031`. The model type and tokenizer are read from it at startup. |
 | `VENUS_MODEL_TOKEN` | — (required) | The same secret as on the model server. |
-| `WEB_PORT` | `8032` | The page opens at `http://localhost:<WEB_PORT>`; it is published on loopback only. |
+| `WEB_PORT` | `8032` | The page opens at `http://<PUBLIC_HOST>:<WEB_PORT>`. |
+| `PUBLIC_HOST` | `localhost` | Host name or IP the page is opened at. The page accepts only localhost and this name (DNS-rebinding guard). |
+| `WEB_BIND_IP` | `127.0.0.1` | Address the page listens on; set `0.0.0.0` to open it from another computer. |
 | `MODEL_TIMEOUT_S` | `180` | Model request timeout in seconds. |
 | `DATA_DIR` | `./data` | Settings (`harness.json`), agent logins (`codex/`, `claude/`) and task files. Relative paths start with `./` and are relative to `deploy/web`. |
 | `GEMINI_API_KEY` | empty | Optional official Gemini key; it can also be entered in Settings. |
@@ -132,7 +136,7 @@ After editing a `.env`, apply it with `docker compose up -d` in the same folder.
 
 **Harness settings** (`deploy/web/data/harness.json`) are written by the browser Settings panel on first save, starting from the defaults in the standalone package's [configuration file](../harness/config.json). They control the task agent (`agent`: `codex` or `claude`, with its own `codex` / `claude` section; timeouts, vision and network settings stay in `codex` for both), routing, Polish (`responses`), multimodal, Gemini, workspace, progress feedback, execution/queue/delivery timeouts, component budgets, and the speaking length. See the [Harness guide](../harness/README.md#configuration-file) for each field; relative paths inside the file resolve from `deploy/web/data`.
 
-The web container runs the task agent's sandbox (bubblewrap for both agents; Claude Code also relays network traffic through socat), which needs the `seccomp=unconfined` and `systempaths=unconfined` options set in `compose.yaml`; without them every task command fails. These options weaken the container's own isolation (every system call allowed, `/proc` unmasked), so the image runs as a non-root user and the page accepts only `localhost` / `127.0.0.1` host names; the sandbox keeps task commands inside the workspace. This setup is tested on macOS with Docker Desktop. On Linux hosts AppArmor may also block the sandbox (`apparmor=unconfined`, untested), and `DATA_DIR` must be writable by uid 1000.
+The web container runs the task agent's sandbox (bubblewrap for both agents; Claude Code also relays network traffic through socat), which needs the `seccomp=unconfined` and `systempaths=unconfined` options set in `compose.yaml`; without them every task command fails. These options weaken the container's own isolation (every system call allowed, `/proc` unmasked), so the image runs as a non-root user and the page accepts only `localhost` / `127.0.0.1` and the `PUBLIC_HOST` host name; the sandbox keeps task commands inside the workspace. This setup is tested on macOS with Docker Desktop. On Linux hosts AppArmor may also block the sandbox (`apparmor=unconfined`, untested), and `DATA_DIR` must be writable by uid 1000.
 
 ### Browser settings
 
