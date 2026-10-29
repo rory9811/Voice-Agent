@@ -10,7 +10,7 @@ from typing import Any, Mapping
 from demos.model import wire as sw
 from demos.model.decoding import configure_length_penalty
 from demos.model.settings import DuplexSettings
-from demos.model.wire import StepStats
+from demos.model.wire import Inbox, Outbox, StepStats
 
 _LOG = logging.getLogger("demos.model.adapter")
 
@@ -31,10 +31,10 @@ PROTOCOL_TOKENS = (
     "</backend>",
 )
 
-# A live web client pulls output at least once a second. A session silent for
-# longer lost its client (crash, network drop) and may be replaced by a new one.
-SESSION_LEASE_S = 15.0
-
+# Outputs the client has not taken yet; the driver stops stepping at this many.
+OUTPUT_WINDOW = 4
+# A detached session waits this long for its client to resume it.
+RESUME_WINDOW_S = 60.0
 
 # ---------------------------------------------------------------------------
 # Capacity measurements, served by server.py at /stats
@@ -70,48 +70,50 @@ def _reset_gpu_peak() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Errors -> mapped to HTTP status by server.py
+# Errors -> the ``code`` the session socket reports to the client
 # ---------------------------------------------------------------------------
 
 
 class AdapterError(RuntimeError):
-    status_code = 400
-
-
-class UnknownSession(AdapterError):
-    status_code = 404
-
-
-class IncarnationMismatch(AdapterError):
-    status_code = 400
+    code = "protocol"
 
 
 class EventSeqMismatch(AdapterError):
-    status_code = 400
+    pass
 
 
 class SessionBusy(AdapterError):
-    status_code = 409
+    code = "model_busy"
 
 
 class ModelMismatch(AdapterError):
-    status_code = 400
+    code = "model_mismatch"
 
 
 class Unsupported(AdapterError):
-    status_code = 400
+    pass
 
 
-class SessionClosedError(AdapterError):
-    status_code = 410
-
-
-class OutputTimeout(TimeoutError):
-    status_code = 408
+class SessionLost(AdapterError):
+    code = "session_lost"
 
 
 class ModelNotLoaded(AdapterError):
-    status_code = 503
+    code = "model_error"
+
+
+# Client frames that carry a transport ``seq`` and are replayed after a reconnect.
+_RELIABLE = frozenset({"audio", "video_frame", "prefill", "playback_ack", "close"})
+
+
+def _checked(header: dict[str, Any], name: str, kind: type) -> Any:
+    """``header[name]`` if it has exactly type ``kind`` (so a bool is not an int)."""
+    value = header.get(name)
+    if type(value) is not kind:
+        raise AdapterError(
+            f"{header.get('type')} frame needs {kind.__name__} {name!r}, got {value!r}"
+        )
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -139,12 +141,9 @@ class _Session:
         "input_seq",
         "consumed_input_seq",
         "audio_buf",
-        "frame_buf",
         "frames",
         "audio_samples",
-        "queue",
         "driver",
-        "stop",
         "gen_epoch",
         "fg_gen",
         "resume_gen",
@@ -153,9 +152,14 @@ class _Session:
         "prev_total_len",
         "ack_chunks",
         "prefill_attempts",
-        "output_requested",
-        "output_inflight",
-        "last_seen",
+        "outbox",
+        "inbox",
+        "emitted",
+        "consumed",
+        "prefill_request",
+        "link",
+        "expiry",
+        "failure",
     )
 
     def __init__(self, session_id: str, incarnation: int, model: str) -> None:
@@ -169,9 +173,7 @@ class _Session:
         self.audio_samples = 0  # count of 16k samples buffered
         self.audio_buf = bytearray()
         self.frames: list[bytes] = []
-        self.queue: asyncio.Queue = asyncio.Queue()
         self.driver: asyncio.Task | None = None
-        self.stop = asyncio.Event()
         self.gen_epoch = 0
         self.fg_gen: tuple[str, int] | None = None
         self.resume_gen: tuple[str, int] | None = None
@@ -179,10 +181,16 @@ class _Session:
         self.audio_seq = 0
         self.prev_total_len = 0
         self.ack_chunks: dict[str, int] = {}
-        self.prefill_attempts: dict[str, dict[str, Any]] = {}
-        self.output_requested = False
-        self.output_inflight = False
-        self.last_seen = time.monotonic()
+        # attempt_id -> (backend text, the prefill_applied header first sent)
+        self.prefill_attempts: dict[str, tuple[str, dict[str, Any]]] = {}
+        self.outbox = Outbox()
+        self.inbox = Inbox()
+        self.emitted = 0  # outputs pushed to the outbox
+        self.consumed = 0  # outputs the client reports it has taken
+        self.prefill_request: dict[str, str] | None = None
+        self.link: asyncio.Event | None = None  # set() tells the attached connection to stop
+        self.expiry: asyncio.Task | None = None
+        self.failure: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +238,7 @@ class RealtimeVenusOmniAdapter:
         self._generation_options: dict[str, Any] = {}
         self._session: _Session | None = None
         self._open_lock = asyncio.Lock()
-        self._turn_lock = asyncio.Lock()  # serializes model forward passes
+        self._closers: set[asyncio.Task] = set()  # keeps scheduled closes referenced
         self._steps = StepStats()
         self._memory_after_load: dict[str, int] | None = None
         self._wakeup = asyncio.Event()
@@ -303,9 +311,11 @@ class RealtimeVenusOmniAdapter:
         adapter._memory_after_load = gpu_memory()
         return adapter
 
-    # -- 8 methods ----------------------------------------------------------
+    # -- session lifecycle ----------------------------------------------------
 
-    async def open_session(self, req: dict[str, Any]) -> dict[str, Any]:
+    async def open_session(
+        self, req: dict[str, Any], link: asyncio.Event
+    ) -> tuple[_Session, dict[str, Any]]:
         protocol = req.get("protocol_version", sw.PROTOCOL_VERSION)
         if protocol != sw.PROTOCOL_VERSION:
             raise AdapterError(f"unsupported protocol_version: {protocol!r}")
@@ -325,11 +335,13 @@ class RealtimeVenusOmniAdapter:
         async with self._open_lock:
             old = self._session
             if old is not None and not old.closed:
-                if time.monotonic() - old.last_seen <= SESSION_LEASE_S:
+                if old.link is not None:
                     raise SessionBusy("a session is already open; max_sessions=1")
-                await self._close_locked(old, "lease_expired")
+                # Its client is gone (e.g. the web server restarted): give up the slot.
+                await self._close_locked(old, "replaced")
             incarnation = (self._session.incarnation + 1) if self._session else 1
             sess = _Session(session_id, incarnation, model)
+            sess.link = link
             # The peak then measures this session alone.
             _reset_gpu_peak()
             # Re-prepare the model for this session (prepare is session-scoped,
@@ -337,7 +349,7 @@ class RealtimeVenusOmniAdapter:
             await asyncio.to_thread(self._prepare_for_session, length_penalty)
             self._session = sess
             sess.driver = asyncio.create_task(
-                self._driver_loop(), name=f"adapter-driver:{session_id}"
+                self._driver_loop(sess), name=f"adapter-driver:{session_id}"
             )
         _LOG.info(
             "open_session %s incarnation=%d length_penalty=%s decoding=%s",
@@ -346,7 +358,7 @@ class RealtimeVenusOmniAdapter:
             self._length_penalty,
             self._decoding_implementation,
         )
-        return sw.session_opened(
+        return sess, sw.session_opened(
             session_id=session_id,
             incarnation=incarnation,
             model=model,
@@ -388,204 +400,174 @@ class RealtimeVenusOmniAdapter:
         self._length_penalty = length_penalty
         self._decoding_implementation = implementation
 
-    async def append_audio(self, req: dict[str, Any]) -> dict[str, Any]:
-        sess = self._require(req)
-        event_seq = int(req["event_seq"])
-        async with self._turn_lock:
-            self._fence_event(sess, event_seq)
-            pcm, sample_rate = sw.parse_audio_append(req)
-            if sample_rate != 16_000:
-                raise AdapterError("input audio must be 16000 Hz")
-            sess.audio_buf.extend(pcm)
-            sess.audio_samples += len(pcm) // 2
-            sess.input_seq += 1
-            self._wakeup.set()
-        return sw.input_accepted(
-            session_id=sess.session_id,
-            incarnation=sess.incarnation,
-            event_seq=event_seq,
-            input_seq=sess.input_seq,
-            accepted_at_ms=sw.now_ms(),
-        )
-
-    async def append_video_frame(self, req: dict[str, Any]) -> dict[str, Any]:
-        if self._model_name == "Realtime-Venus-Audio":
-            raise Unsupported("The Audio checkpoint does not accept video frames")
-        sess = self._require(req)
-        event_seq = int(req["event_seq"])
-        async with self._turn_lock:
-            self._fence_event(sess, event_seq)
-            frame_bytes, _mime = sw.parse_frame_append(req)
-            sess.frames.append(frame_bytes)
-            sess.input_seq += 1
-            self._wakeup.set()
-        return sw.input_accepted(
-            session_id=sess.session_id,
-            incarnation=sess.incarnation,
-            event_seq=event_seq,
-            input_seq=sess.input_seq,
-            accepted_at_ms=sw.now_ms(),
-        )
-
-    async def append_video_segment(self, req: dict[str, Any]) -> dict[str, Any]:
-        # This adapter accepts sampled frames, not encoded video segments.
-        raise Unsupported("video segments are not supported (video_segments=false)")
-
-    async def next_output_step(
+    async def resume_session(
         self,
         session_id: str,
-        *,
         incarnation: int,
-        timeout_s: float | None = None,
-    ) -> dict[str, Any]:
-        sess = self._require_by_id(session_id, incarnation)
-        if sess.queue.empty() and sess.closed:
-            raise SessionClosedError(f"session closed: {session_id}")
-        if sess.queue.empty() and not sess.output_inflight:
-            sess.output_requested = True
-            self._wakeup.set()
-        try:
-            if timeout_s is None:
-                item = await sess.queue.get()
-            elif timeout_s <= 0:
-                item = sess.queue.get_nowait()
-            else:
-                item = await asyncio.wait_for(sess.queue.get(), timeout_s)
-        except asyncio.TimeoutError as exc:
-            raise OutputTimeout("no model output within timeout") from exc
-        except asyncio.QueueEmpty as exc:
-            raise OutputTimeout("no model output ready") from exc
-        if item is None:
-            raise SessionClosedError(f"session closed: {session_id}")
-        return item
-
-    async def append_prefill(self, req: dict[str, Any]) -> dict[str, Any]:
-        sess = self._require(req)
-        work_id = str(req["work_id"])
-        attempt_id = str(req["attempt_id"])
-        text_list = tuple(req["text_list"])
-        if len(text_list) != 1:
-            raise AdapterError("text_list must contain exactly one backend prefill")
-        backend_text = text_list[0]
-        # idempotency by attempt_id for retry-safe feedback
-        existing = sess.prefill_attempts.get(attempt_id)
-        if existing is not None:
-            if existing["text"] != backend_text:
-                raise AdapterError("attempt_id reused with different prefill text")
-            return sw.prefill_applied(
-                session_id=sess.session_id,
-                incarnation=sess.incarnation,
-                work_id=work_id,
-                attempt_id=attempt_id,
-                generation_id=existing["generation_id"],
-                generation_epoch=existing["generation_epoch"],
-                kv_position=existing["kv_position"],
-                applied_at_ms=existing["applied_at_ms"],
-                deduplicated=True,
-            )
-        async with self._turn_lock:
-            self._ensure_not_closed(sess)
-            sess.output_requested = False
+        *,
+        ack: int,
+        consumed: int,
+        link: asyncio.Event,
+    ) -> _Session:
+        async with self._open_lock:
+            sess = self._session
             if (
-                sess.fg_gen is not None
-                or sess.resume_gen is not None
-                or not sess.queue.empty()
+                sess is None
+                or sess.closed
+                or sess.session_id != session_id
+                or sess.incarnation != incarnation
             ):
-                raise SessionBusy("drain pending model output before backend prefill")
-            gen_id, gen_epoch = self._allocate_generation(sess, prefix="backend")
-            # Bypass the memory hijack: write <backend> directly to the live KV via
-            # the official duplex, then generate resumes on the same KV.
-            await asyncio.to_thread(
-                self._official.streaming_prefill, None, None, [backend_text], 1, False
-            )
-            sess.resume_gen = (gen_id, gen_epoch)
-            sess.step_seq = 0
-            sess.audio_seq = 0
-            sess.prev_total_len = len(self._official.total_ids)
-            kv_position = sess.prev_total_len
-            sess.prefill_attempts[attempt_id] = {
-                "text": backend_text,
-                "generation_id": gen_id,
-                "generation_epoch": gen_epoch,
-                "kv_position": kv_position,
-                "applied_at_ms": sw.now_ms(),
-            }
+                raise SessionLost(f"no open session {session_id!r} incarnation {incarnation!r}")
+            self._credit(sess, ack, consumed)
+            if sess.link is not None:
+                sess.link.set()  # a half-open connection the server still thinks is live
+            if sess.expiry is not None:
+                sess.expiry.cancel()
+                sess.expiry = None
+            sess.link = link
             self._wakeup.set()
-        _LOG.info(
-            "append_prefill work=%s attempt=%s gen=%s epoch=%d",
-            work_id,
-            attempt_id,
-            gen_id,
-            gen_epoch,
-        )
-        return sw.prefill_applied(
-            session_id=sess.session_id,
-            incarnation=sess.incarnation,
-            work_id=work_id,
-            attempt_id=attempt_id,
-            generation_id=gen_id,
-            generation_epoch=gen_epoch,
-            kv_position=kv_position,
-            applied_at_ms=sw.now_ms(),
-            deduplicated=False,
-        )
+        _LOG.info("resume_session %s incarnation=%d", session_id, incarnation)
+        return sess
 
-    async def acknowledge_playback(self, req: dict[str, Any]) -> dict[str, Any]:
-        sess = self._require(req)
-        utterance_id = str(req["utterance_id"])
-        cumulative = int(req["cumulative_played_chunks"])
-        async with self._turn_lock:
-            self._ensure_not_closed(sess)
-            previous = sess.ack_chunks.get(utterance_id, 0)
-            if cumulative < previous:
+    def detach(self, sess: _Session, link: asyncio.Event) -> None:
+        """The connection behind ``link`` ended; keep the session for a resume."""
+        if sess.link is not link:
+            return  # a newer connection already took the session over
+        sess.link = None
+        if not sess.closed:
+            sess.expiry = asyncio.create_task(
+                self._expire(sess), name=f"adapter-expiry:{sess.session_id}"
+            )
+
+    async def _expire(self, sess: _Session) -> None:
+        await asyncio.sleep(RESUME_WINDOW_S)
+        async with self._open_lock:
+            # A resume holds this lock and would have cancelled us. Clear the
+            # field so _close_locked does not cancel this very task.
+            sess.expiry = None
+            await self._close_locked(sess, "link_lost")
+
+    def receive(self, sess: _Session, header: dict[str, Any], payload: bytes) -> None:
+        """Apply one client frame. Never awaits: an input and its ack are one step."""
+        if sess.closed:
+            return  # frames still in flight at close have nothing left to act on
+        self._credit(sess, header.get("ack"), header.get("consumed"))
+        kind = header.get("type")
+        if kind in _RELIABLE:
+            try:
+                if not sess.inbox.accept(_checked(header, "seq", int)):
+                    return  # replayed after a reconnect; already applied
+            except sw.FrameError as exc:
+                raise AdapterError(str(exc)) from exc
+        elif kind != "state":
+            raise AdapterError(f"unknown frame type: {kind!r}")
+        if kind == "audio":
+            event_seq = _checked(header, "event_seq", int)
+            if header.get("sample_rate_hz") != 16_000:
+                raise AdapterError("input audio must be 16000 Hz")
+            if len(payload) % 2:
+                raise AdapterError("PCM16 audio needs an even number of bytes")
+            self._fence_event(sess, event_seq)
+            sess.audio_buf.extend(payload)
+            sess.audio_samples += len(payload) // 2
+            self._accept_input(sess, event_seq)
+        elif kind == "video_frame":
+            if self._model_name == "Realtime-Venus-Audio":
+                raise Unsupported("The Audio checkpoint does not accept video frames")
+            event_seq = _checked(header, "event_seq", int)
+            self._fence_event(sess, event_seq)
+            sess.frames.append(payload)
+            self._accept_input(sess, event_seq)
+        elif kind == "prefill":
+            self._receive_prefill(sess, header)
+        elif kind == "playback_ack":
+            utterance_id = _checked(header, "utterance_id", str)
+            cumulative = _checked(header, "cumulative_played_chunks", int)
+            if cumulative < sess.ack_chunks.get(utterance_id, 0):
                 raise AdapterError("playback acknowledgement moved backwards")
             sess.ack_chunks[utterance_id] = cumulative
-        return sw.playback_accepted(
-            session_id=sess.session_id,
-            incarnation=sess.incarnation,
-            utterance_id=utterance_id,
-            cumulative_played_chunks=cumulative,
-            accepted_at_ms=sw.now_ms(),
-        )
+        elif kind == "close":
+            self._spawn_close(sess, "client_close")
+        self._wakeup.set()
 
-    async def close_session(self, req: dict[str, Any]) -> dict[str, Any]:
-        reason = str(req.get("reason", "client_close"))
-        sess = self._require(req, allow_closed=True)
-        async with self._open_lock:
-            return await self._close_locked(sess, reason)
+    @staticmethod
+    def _credit(sess: _Session, ack: Any, consumed: Any) -> None:
+        """Drop the frames the client confirmed and record the outputs it took."""
+        for name, value in (("ack", ack), ("consumed", consumed)):
+            if type(value) is not int:
+                raise AdapterError(f"{name} must be an integer, got {value!r}")
+        if ack > sess.outbox.last_seq or consumed > sess.emitted:
+            raise AdapterError("ack or consumed is ahead of what the model sent")
+        sess.outbox.confirm(ack)
+        sess.consumed = max(sess.consumed, consumed)
 
-    async def _close_locked(self, sess: _Session, reason: str) -> dict[str, Any]:
-        """Close ``sess``; the caller holds ``_open_lock``."""
-        if sess.closed and sess.stop.is_set():
-            return sw.session_closed(
+    @staticmethod
+    def _accept_input(sess: _Session, event_seq: int) -> None:
+        sess.input_seq += 1
+        sess.outbox.push(
+            sw.input_accepted(
                 session_id=sess.session_id,
                 incarnation=sess.incarnation,
-                closed_at_ms=sw.now_ms(),
+                event_seq=event_seq,
+                input_seq=sess.input_seq,
+                accepted_at_ms=sw.now_ms(),
             )
+        )
+
+    @staticmethod
+    def _receive_prefill(sess: _Session, header: dict[str, Any]) -> None:
+        work_id = _checked(header, "work_id", str)
+        attempt_id = _checked(header, "attempt_id", str)
+        text_list = _checked(header, "text_list", list)
+        if len(text_list) != 1 or type(text_list[0]) is not str:
+            raise AdapterError("text_list must contain exactly one backend prefill")
+        text = text_list[0]
+        existing = sess.prefill_attempts.get(attempt_id)
+        if existing is not None:
+            if existing[0] != text:
+                raise AdapterError("attempt_id reused with different prefill text")
+            sess.outbox.push({**existing[1], "deduplicated": True})
+            return
+        if sess.prefill_request is not None:
+            raise AdapterError("a backend prefill is already waiting to be applied")
+        sess.prefill_request = {"work_id": work_id, "attempt_id": attempt_id, "text": text}
+
+    def _spawn_close(self, sess: _Session, reason: str) -> None:
+        task = asyncio.create_task(self.close_session(sess, reason))
+        self._closers.add(task)
+        task.add_done_callback(self._closers.discard)
+
+    async def close_session(self, sess: _Session, reason: str) -> None:
+        async with self._open_lock:
+            await self._close_locked(sess, reason)
+
+    async def _close_locked(self, sess: _Session, reason: str) -> None:
+        """Close ``sess``; the caller holds ``_open_lock`` so no open races the teardown."""
+        if sess.closed:
+            return
         sess.closed = True
-        sess.stop.set()
-        self._wakeup.set()
-        # Unblock any pending next_output_step pull.
-        sess.queue.put_nowait(None)
-        # Finish the in-flight worker before destroying KV. Keep the open
-        # lock until cleanup ends, so a browser reconnect cannot race it.
+        if sess.expiry is not None:
+            sess.expiry.cancel()
+            sess.expiry = None
         stop_fn = getattr(self._official, "set_session_stop", None)
         if callable(stop_fn):
             stop_fn()
-        async with self._turn_lock:
-            await asyncio.to_thread(self._teardown_model)
+        # Cancelling would not stop a step running in its thread; wait for the
+        # driver to return before destroying the KV it is using.
         if sess.driver is not None:
-            sess.driver.cancel()
-            try:
-                await sess.driver
-            except asyncio.CancelledError:
-                pass
+            await asyncio.wait([sess.driver])
+        await asyncio.to_thread(self._teardown_model)
+        if sess.failure is None:
+            sess.outbox.push(
+                sw.session_closed(
+                    session_id=sess.session_id,
+                    incarnation=sess.incarnation,
+                    closed_at_ms=sw.now_ms(),
+                )
+            )
+        if sess.link is not None:
+            sess.link.set()
         _LOG.info("close_session %s reason=%s", sess.session_id, reason)
-        return sw.session_closed(
-            session_id=sess.session_id,
-            incarnation=sess.incarnation,
-            closed_at_ms=sw.now_ms(),
-        )
 
     def _teardown_model(self) -> None:
         as_simplex = getattr(self._model, "as_simplex", None)
@@ -616,40 +598,73 @@ class RealtimeVenusOmniAdapter:
 
     # -- driver -------------------------------------------------------------
 
-    async def _driver_loop(self) -> None:
-        sess = self._session
-        if sess is None:
-            return
+    async def _driver_loop(self, sess: _Session) -> None:
+        """The only caller of the model: prefill writes and steps run here, one at a time."""
         try:
             while not sess.closed:
-                acted = False
-                async with self._turn_lock:
-                    if sess.closed:
-                        break
-                    if sess.output_requested:
-                        sess.output_inflight = True
-                        try:
-                            started = time.perf_counter()
-                            acted = await self._step_once(sess)
-                            if acted:
-                                self._steps.add((time.perf_counter() - started) * 1000)
-                                sess.output_requested = False
-                        finally:
-                            sess.output_inflight = False
-                if not acted:
-                    if self._wakeup.is_set():
-                        self._wakeup.clear()
+                if (
+                    sess.prefill_request is not None
+                    and sess.fg_gen is None
+                    and sess.resume_gen is None
+                ):
+                    await self._apply_prefill(sess)
+                    continue
+                if sess.emitted - sess.consumed < OUTPUT_WINDOW:
+                    started = time.perf_counter()
+                    frame = await self._step_once(sess)
+                    if frame is not None:
+                        self._steps.add((time.perf_counter() - started) * 1000)
+                        sess.outbox.push(*frame)
+                        sess.emitted += 1
                         continue
+                if self._wakeup.is_set():
                     self._wakeup.clear()
-                    await asyncio.sleep(0.02)
-        except asyncio.CancelledError:
-            raise
-        except Exception:  # noqa: BLE001 - never let the driver die silently
+                    continue
+                await asyncio.sleep(0.02)
+        except Exception as exc:  # noqa: BLE001 - never let the driver die silently
             _LOG.exception("driver loop crashed")
-            sess.closed = True
-            sess.queue.put_nowait(None)
+            # A step the stop request interrupted is the close itself, not a failure.
+            if not sess.closed:
+                sess.failure = f"{type(exc).__name__}: {exc}"
+                # close_session waits for this task to end, so it cannot be awaited here.
+                self._spawn_close(sess, "model_error")
 
-    async def _step_once(self, sess: _Session) -> bool:
+    async def _apply_prefill(self, sess: _Session) -> None:
+        request = sess.prefill_request
+        gen_id, gen_epoch = self._allocate_generation(sess, prefix="backend")
+        # Bypass the memory hijack: write <backend> directly to the live KV via
+        # the official duplex, then generate resumes on the same KV.
+        await asyncio.to_thread(
+            self._official.streaming_prefill, None, None, [request["text"]], 1, False
+        )
+        sess.prefill_request = None
+        sess.resume_gen = (gen_id, gen_epoch)
+        sess.step_seq = 0
+        sess.audio_seq = 0
+        sess.prev_total_len = len(self._official.total_ids)
+        applied = sw.prefill_applied(
+            session_id=sess.session_id,
+            incarnation=sess.incarnation,
+            work_id=request["work_id"],
+            attempt_id=request["attempt_id"],
+            generation_id=gen_id,
+            generation_epoch=gen_epoch,
+            kv_position=sess.prev_total_len,
+            applied_at_ms=sw.now_ms(),
+            deduplicated=False,
+        )
+        sess.prefill_attempts[request["attempt_id"]] = (request["text"], applied)
+        sess.outbox.push(dict(applied))
+        _LOG.info(
+            "prefill applied work=%s attempt=%s gen=%s epoch=%d",
+            request["work_id"],
+            request["attempt_id"],
+            gen_id,
+            gen_epoch,
+        )
+
+    async def _step_once(self, sess: _Session) -> tuple[dict[str, Any], bytes] | None:
+        """One model step as an ``output`` frame, or None while a bucket is still filling."""
         if sess.resume_gen is not None:
             gen_id, gen_epoch = sess.resume_gen
             if sess.step_seq:
@@ -668,16 +683,15 @@ class RealtimeVenusOmniAdapter:
                     1,
                     False,
                 )
-            step, finished = await self._generate_step(
+            step, pcm, finished = await self._generate_step(
                 sess, gen_id, gen_epoch, is_backend=True
             )
-            await sess.queue.put(step)
             if finished:
                 sess.resume_gen = None
-            return True
+            return step, pcm
         bucket = self._collect_bucket(sess)
         if bucket is None:
-            return False
+            return None
         await asyncio.to_thread(
             self._model.streaming_prefill,
             bucket.audio,
@@ -692,17 +706,16 @@ class RealtimeVenusOmniAdapter:
             sess.audio_seq = 0
             sess.prev_total_len = len(self._official.total_ids)
         gen_id, gen_epoch = sess.fg_gen
-        step, finished = await self._generate_step(
+        step, pcm, finished = await self._generate_step(
             sess, gen_id, gen_epoch, is_backend=False
         )
-        await sess.queue.put(step)
         if finished:
             sess.fg_gen = None
-        return True
+        return step, pcm
 
     async def _generate_step(
         self, sess: _Session, gen_id: str, gen_epoch: int, *, is_backend: bool
-    ) -> tuple[dict[str, Any], bool]:
+    ) -> tuple[dict[str, Any], bytes, bool]:
         gen_fn = (self._official if is_backend else self._model).streaming_generate
         # delta tracking: snapshot total_ids length right before generate
         prev_len = sess.prev_total_len
@@ -735,9 +748,9 @@ class RealtimeVenusOmniAdapter:
             )
         sess.prev_total_len = len(ids)
         wave = None if result.get("is_listen") else result.get("audio_waveform")
-        audio_dict = sw.generated_audio_dict(wave, 24_000)
+        pcm = sw.float32_to_pcm16le(wave)
         audio_chunk_seq = None
-        if audio_dict is not None:
+        if pcm:
             sess.audio_seq += 1
             audio_chunk_seq = sess.audio_seq
         sess.step_seq += 1
@@ -757,12 +770,12 @@ class RealtimeVenusOmniAdapter:
             input_seq_cutoff=sess.consumed_input_seq,
             at_ms=sw.now_ms(),
             total_token_ids=delta,
-            audio=audio_dict,
+            audio=sw.audio_header() if pcm else None,
             audio_chunk_seq=audio_chunk_seq,
             turn_finished=finished,
             finish_reason=finish_reason,
         )
-        return step, finished
+        return step, pcm, finished
 
     def _collect_bucket(self, sess: _Session) -> Any | None:
         if sess.event_seq == 0:
@@ -795,31 +808,6 @@ class RealtimeVenusOmniAdapter:
         return gen_id, sess.gen_epoch
 
     # -- helpers ------------------------------------------------------------
-
-    def _require(self, req: dict[str, Any], *, allow_closed: bool = False) -> _Session:
-        return self._require_by_id(
-            str(req.get("session_id", "")),
-            int(req.get("incarnation", 0)),
-            allow_closed=allow_closed,
-        )
-
-    def _require_by_id(
-        self, session_id: str, incarnation: int, *, allow_closed: bool = False
-    ) -> _Session:
-        sess = self._session
-        if sess is None or sess.session_id != session_id:
-            raise UnknownSession(f"unknown session: {session_id}")
-        if sess.incarnation != incarnation:
-            raise IncarnationMismatch("session incarnation does not match")
-        sess.last_seen = time.monotonic()
-        if sess.closed and not allow_closed:
-            raise SessionClosedError(f"session closed: {session_id}")
-        return sess
-
-    @staticmethod
-    def _ensure_not_closed(sess: _Session) -> None:
-        if sess.closed:
-            raise SessionClosedError(f"session closed: {sess.session_id}")
 
     @staticmethod
     def _fence_event(sess: _Session, event_seq: int) -> None:

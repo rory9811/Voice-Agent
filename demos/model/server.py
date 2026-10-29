@@ -13,12 +13,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from demos.model.adapter import (
-    AdapterError,
-    ModelNotLoaded,
-    OutputTimeout,
-    RealtimeVenusOmniAdapter,
-)
+from demos.model.adapter import ModelNotLoaded, RealtimeVenusOmniAdapter
 from demos.model.checkpoint import checked_file, checkpoint_directory
 from demos.model.prompts import REALTIME_VENUS_SYSTEM_PROMPT
 from demos.model.settings import TOKEN_ENV, model_token, require_token
@@ -48,7 +43,6 @@ class _ServerConfig:
     model_revision: str = "realtime-venus-omni-v1"
     model_name: str = "Realtime-Venus-Omni"
     system_prompt: str | None = None
-    default_timeout_s: float = 30.0
     host: str = "127.0.0.1"
     port: int = 8000
     log_level: str = "info"
@@ -87,13 +81,7 @@ def create_app(config: _ServerConfig) -> FastAPI:
             sess = getattr(adapter, "_session", None)  # noqa: SLF001
             if sess is not None and not sess.closed:
                 try:
-                    await adapter.close_session(
-                        {
-                            "session_id": sess.session_id,
-                            "incarnation": sess.incarnation,
-                            "reason": "server_shutdown",
-                        }
-                    )
+                    await adapter.close_session(sess, "server_shutdown")
                 except Exception:  # noqa: BLE001
                     _LOG.warning("shutdown close failed", exc_info=True)
 
@@ -125,15 +113,6 @@ def create_app(config: _ServerConfig) -> FastAPI:
             raise ModelNotLoaded("adapter is not ready")
         return a
 
-    def _err(exc: Exception) -> JSONResponse:
-        code = getattr(exc, "status_code", 500)
-        if code == 408 or isinstance(exc, OutputTimeout):
-            code = 408
-        return JSONResponse(
-            status_code=int(code),
-            content={"error": str(exc), "type": type(exc).__name__},
-        )
-
     @app.get("/healthz")
     async def health(request: Request):
         if not state["ready"]:
@@ -163,81 +142,6 @@ def create_app(config: _ServerConfig) -> FastAPI:
                 if (root / name).is_file()
             }
         }
-
-    @app.post("/sessions")
-    async def open_session(req: Request):
-        try:
-            return await adapter().open_session(await req.json())
-        except (AdapterError, ModelNotLoaded) as exc:
-            return _err(exc)
-
-    @app.delete("/sessions/{sid}")
-    async def close_session(sid: str, incarnation: int, reason: str = "client_close"):
-        try:
-            return await adapter().close_session(
-                {"session_id": sid, "incarnation": incarnation, "reason": reason}
-            )
-        except (AdapterError, ModelNotLoaded) as exc:
-            return _err(exc)
-
-    async def _body_with_session(req: Request, sid: str) -> dict[str, Any]:
-        body = await req.json()
-        if body.get("session_id") != sid:
-            raise AdapterError(f"path session_id {sid!r} does not match body")
-        body.setdefault("session_id", sid)
-        return body
-
-    @app.post("/sessions/{sid}/audio")
-    async def append_audio(sid: str, req: Request):
-        try:
-            return await adapter().append_audio(await _body_with_session(req, sid))
-        except (AdapterError, ModelNotLoaded) as exc:
-            return _err(exc)
-
-    @app.post("/sessions/{sid}/video_frame")
-    async def append_video_frame(sid: str, req: Request):
-        try:
-            return await adapter().append_video_frame(
-                await _body_with_session(req, sid)
-            )
-        except (AdapterError, ModelNotLoaded) as exc:
-            return _err(exc)
-
-    @app.post("/sessions/{sid}/video_segment")
-    async def append_video_segment(sid: str, req: Request):
-        try:
-            return await adapter().append_video_segment(
-                await _body_with_session(req, sid)
-            )
-        except (AdapterError, ModelNotLoaded) as exc:
-            return _err(exc)
-
-    @app.post("/sessions/{sid}/prefill")
-    async def append_prefill(sid: str, req: Request):
-        try:
-            return await adapter().append_prefill(await _body_with_session(req, sid))
-        except (AdapterError, ModelNotLoaded) as exc:
-            return _err(exc)
-
-    @app.post("/sessions/{sid}/playback_ack")
-    async def acknowledge_playback(sid: str, req: Request):
-        try:
-            return await adapter().acknowledge_playback(
-                await _body_with_session(req, sid)
-            )
-        except (AdapterError, ModelNotLoaded) as exc:
-            return _err(exc)
-
-    @app.post("/sessions/{sid}/output")
-    async def next_output_step(
-        sid: str, incarnation: int, timeout_s: float | None = None
-    ):
-        try:
-            a = adapter()
-            ts = timeout_s if timeout_s is not None else config.default_timeout_s
-            return await a.next_output_step(sid, incarnation=incarnation, timeout_s=ts)
-        except (AdapterError, ModelNotLoaded, OutputTimeout) as exc:
-            return _err(exc)
 
     return app
 
@@ -273,7 +177,6 @@ def _parse_args(argv: list[str] | None = None) -> _ServerConfig:
         action="store_true",
         help="use the model's built-in DEFAULT_SYSTEM_PROMPT (Chinese-only) instead of the streaming default",
     )
-    p.add_argument("--default-timeout-s", type=float, default=30.0)
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--log-level", default="info")
@@ -300,7 +203,6 @@ def _parse_args(argv: list[str] | None = None) -> _ServerConfig:
         model_revision=a.model_revision or f"realtime-venus-{a.model_type}-v1",
         model_name=a.model_name or model_name(a.model_type),
         system_prompt=system_prompt,
-        default_timeout_s=a.default_timeout_s,
         host=a.host,
         port=a.port,
         log_level=a.log_level,

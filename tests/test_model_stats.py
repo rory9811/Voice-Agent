@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import unittest
 from types import SimpleNamespace
@@ -7,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from demos.model.adapter import gpu_memory
 from demos.model.server import _ServerConfig, create_app
-from demos.model.wire import PROTOCOL_VERSION, StepStats, b64
+from demos.model.wire import PROTOCOL_VERSION, StepStats
 from test_model_server import omni_adapter
 
 MIB = 1024 * 1024
@@ -55,14 +56,17 @@ class GpuMemoryTests(unittest.TestCase):
 class AdapterStatsTests(unittest.IsolatedAsyncioTestCase):
     async def test_each_model_step_is_timed(self):
         adapter = omni_adapter()
-        opened = await adapter.open_session(
-            {"session_id": "s", "model": "Realtime-Venus-Omni", "protocol_version": PROTOCOL_VERSION})
-        incarnation = opened["incarnation"]
-        await adapter.append_audio({"session_id": "s", "incarnation": incarnation, "event_seq": 1,
-                                    "data": b64(b"\0\0" * 16000), "sample_rate_hz": 16000})
-        await adapter.next_output_step("s", incarnation=incarnation, timeout_s=5)
+        sess, _ = await adapter.open_session(
+            {"session_id": "s", "model": "Realtime-Venus-Omni", "protocol_version": PROTOCOL_VERSION},
+            asyncio.Event())
+        adapter.receive(sess, {"type": "audio", "seq": 1, "ack": 0, "consumed": 0, "event_seq": 1,
+                               "sample_rate_hz": 16000}, b"\0\0" * 16000)
+        for _ in range(500):
+            if any(h["type"] == "output" for h, _ in sess.outbox.after(0)):
+                break
+            await asyncio.sleep(0.01)
         stats = await adapter.stats()
-        await adapter.close_session({"session_id": "s", "incarnation": incarnation})
+        await adapter.close_session(sess, "test_end")
         self.assertEqual(stats["steps"]["count"], 1)
         self.assertIsNotNone(stats["steps"]["max_ms"])
         self.assertIn("gpu_memory", stats)

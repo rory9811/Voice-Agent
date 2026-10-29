@@ -8,7 +8,8 @@ harness package (which requires Python 3.11, e.g. ``enum.StrEnum``).
 Wire rules (must mirror the frozen dataclasses in ``harness/bridge/serving.py``):
 
 * every DTO is a JSON object whose keys are the dataclass field names verbatim;
-* ``bytes`` fields (audio PCM, encoded frames/segments) become base64 strings;
+* ``bytes`` fields (audio PCM, encoded frames) travel as the raw frame payload,
+  not in the JSON header;
 * ``tuple[int, ...]`` (token IDs) become JSON arrays of ints;
 * ``Mapping[str, int]`` (special_token_ids) becomes a JSON object token->id;
 * enums become their ``.value`` strings;
@@ -21,7 +22,6 @@ client (py3.11) reconstructs the real DTOs from the same dicts.
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import math
 from collections import deque
@@ -46,14 +46,6 @@ def now_ms() -> int:
     import time
 
     return time.time_ns() // 1_000_000
-
-
-def b64(data: bytes) -> str:
-    return base64.b64encode(data).decode("ascii")
-
-
-def unb64(value: str) -> bytes:
-    return base64.b64decode(value.encode("ascii"))
 
 
 # ---------------------------------------------------------------------------
@@ -97,42 +89,15 @@ def decode_frames(frame_bytes_list: Any) -> list[Any]:
     return frames
 
 
-def generated_audio_dict(
-    wave: "Any", sample_rate_hz: int = 24_000
-) -> dict[str, Any] | None:
-    """Build the GeneratedAudio wire dict from a float32 waveform.
+def audio_header(sample_rate_hz: int = 24_000) -> dict[str, Any]:
+    """GeneratedAudio without its bytes; the PCM16 samples are the frame payload."""
 
-    Returns None when the model produced no audio (e.g. a ``listen`` chunk or a
-    suppressed delegate step): the harness ``ModelOutputStep`` allows
-    ``audio=None`` as long as the step otherwise carries tokens or turn finish.
-    """
-
-    if wave is None:
-        return None
-    data = float32_to_pcm16le(wave)
-    if not data:
-        return None
     return {
-        "data": b64(data),
         "sample_rate_hz": int(sample_rate_hz),
         "channels": 1,
         "sample_width_bytes": 2,
         "format": FORMAT_PCM_S16LE,
     }
-
-
-def parse_audio_append(req: dict[str, Any]) -> tuple[bytes, int]:
-    """Return (raw_pcm_bytes, sample_rate_hz) from an AudioAppend wire dict."""
-
-    data = unb64(req["data"])
-    sample_rate = int(req.get("sample_rate_hz", 16_000))
-    return data, sample_rate
-
-
-def parse_frame_append(req: dict[str, Any]) -> tuple[bytes, str]:
-    """Return (image_bytes, mime_type) from a VideoFrameAppend wire dict."""
-
-    return unb64(req["data"]), str(req.get("mime_type", "image/jpeg"))
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +118,7 @@ def session_opened(
     delegate_audio_filtered: bool = False,
 ) -> dict[str, Any]:
     return {
+        "type": "opened",
         "session_id": session_id,
         "incarnation": incarnation,
         "model": model,
@@ -181,6 +147,7 @@ def input_accepted(
     accepted_at_ms: int,
 ) -> dict[str, Any]:
     return {
+        "type": "input_accepted",
         "session_id": session_id,
         "incarnation": incarnation,
         "event_seq": int(event_seq),
@@ -205,6 +172,7 @@ def model_output_step(
     finish_reason: str | None,
 ) -> dict[str, Any]:
     return {
+        "type": "output",
         "session_id": session_id,
         "incarnation": incarnation,
         "generation_id": generation_id,
@@ -233,6 +201,7 @@ def prefill_applied(
     deduplicated: bool = False,
 ) -> dict[str, Any]:
     return {
+        "type": "prefill_applied",
         "session_id": session_id,
         "incarnation": incarnation,
         "work_id": work_id,
@@ -245,27 +214,11 @@ def prefill_applied(
     }
 
 
-def playback_accepted(
-    *,
-    session_id: str,
-    incarnation: int,
-    utterance_id: str,
-    cumulative_played_chunks: int,
-    accepted_at_ms: int,
-) -> dict[str, Any]:
-    return {
-        "session_id": session_id,
-        "incarnation": incarnation,
-        "utterance_id": utterance_id,
-        "cumulative_played_chunks": int(cumulative_played_chunks),
-        "accepted_at_ms": int(accepted_at_ms),
-    }
-
-
 def session_closed(
     *, session_id: str, incarnation: int, closed_at_ms: int
 ) -> dict[str, Any]:
     return {
+        "type": "closed",
         "session_id": session_id,
         "incarnation": incarnation,
         "closed_at_ms": int(closed_at_ms),
@@ -382,17 +335,12 @@ __all__ = [
     "FORMAT_PCM_S16LE",
     "VISIBILITY_PRIVATE",
     "now_ms",
-    "b64",
-    "unb64",
     "pcm16le_to_float32",
     "float32_to_pcm16le",
-    "generated_audio_dict",
-    "parse_audio_append",
-    "parse_frame_append",
+    "audio_header",
     "session_opened",
     "input_accepted",
     "model_output_step",
     "prefill_applied",
-    "playback_accepted",
     "session_closed",
 ]

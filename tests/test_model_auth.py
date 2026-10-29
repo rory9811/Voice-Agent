@@ -48,7 +48,6 @@ class ServerAuthTests(unittest.TestCase):
         with self.client("secret") as client:
             self.assertEqual(client.get("/tokenizer").status_code, 401)
             self.assertEqual(client.get("/tokenizer", headers=bearer("wrong")).status_code, 401)
-            self.assertEqual(client.post("/sessions", json={}).status_code, 401)
             self.assertEqual(client.get("/tokenizer", headers=bearer("secret")).status_code, 200)
 
     def test_health_is_public_and_reports_token_check(self):
