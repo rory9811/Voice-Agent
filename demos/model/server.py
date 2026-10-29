@@ -148,6 +148,11 @@ def create_app(config: _ServerConfig) -> FastAPI:
             **h,
         }
 
+    @app.get("/stats")
+    async def stats():
+        # Capacity measurements; token-protected because they reveal activity.
+        return await adapter().stats()
+
     @app.get("/tokenizer")
     async def tokenizer():
         root = Path(config.model_path)

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
+from collections import deque
 from typing import Any, Mapping
 
 from demos.model import wire as sw
@@ -33,6 +35,64 @@ PROTOCOL_TOKENS = (
 # A live web client pulls output at least once a second. A session silent for
 # longer lost its client (crash, network drop) and may be replaced by a new one.
 SESSION_LEASE_S = 15.0
+
+
+# ---------------------------------------------------------------------------
+# Capacity measurements, served by server.py at /stats
+# ---------------------------------------------------------------------------
+
+
+class StepStats:
+    """Wall-clock time of recent model steps (one step per second of input)."""
+
+    def __init__(self, size: int = 600) -> None:
+        self._ms: deque[float] = deque(maxlen=size)
+
+    def add(self, ms: float) -> None:
+        self._ms.append(ms)
+
+    def summary(self) -> dict[str, Any]:
+        if not self._ms:
+            return {"count": 0, "p50_ms": None, "p95_ms": None, "max_ms": None}
+        ordered = sorted(self._ms)
+
+        def nearest_rank(p: float) -> float:
+            return round(ordered[math.ceil(p * len(ordered)) - 1], 1)
+
+        return {
+            "count": len(ordered),
+            "p50_ms": nearest_rank(0.5),
+            "p95_ms": nearest_rank(0.95),
+            "max_ms": round(ordered[-1], 1),
+        }
+
+
+def gpu_memory() -> dict[str, int] | None:
+    """This process's and the whole device's GPU memory in MiB; None without CUDA."""
+    try:
+        import torch
+    except ImportError:
+        return None
+    if not torch.cuda.is_available():
+        return None
+    mib = 1024 * 1024
+    free, total = torch.cuda.mem_get_info()
+    return {
+        "allocated_mib": torch.cuda.memory_allocated() // mib,
+        "reserved_mib": torch.cuda.memory_reserved() // mib,
+        "peak_allocated_mib": torch.cuda.max_memory_allocated() // mib,
+        "device_used_mib": (total - free) // mib,
+        "device_total_mib": total // mib,
+    }
+
+
+def _reset_gpu_peak() -> None:
+    try:
+        import torch
+    except ImportError:
+        return
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +257,8 @@ class RealtimeVenusOmniAdapter:
         self._session: _Session | None = None
         self._open_lock = asyncio.Lock()
         self._turn_lock = asyncio.Lock()  # serializes model forward passes
+        self._steps = StepStats()
+        self._memory_after_load: dict[str, int] | None = None
         self._wakeup = asyncio.Event()
 
     # -- construction -------------------------------------------------------
@@ -252,7 +314,7 @@ class RealtimeVenusOmniAdapter:
             )
         if len(set(special.values())) != len(special):
             raise ModelNotLoaded("protocol token ids are not unique")
-        return cls(
+        adapter = cls(
             model,
             special_token_ids=special,
             model_revision=model_revision,
@@ -263,6 +325,9 @@ class RealtimeVenusOmniAdapter:
             chunk_seconds=chunk_seconds,
             max_new_speak_tokens_per_chunk=max_new_speak_tokens_per_chunk,
         )
+        # Weights plus static buffers: the part every instance repeats.
+        adapter._memory_after_load = gpu_memory()
+        return adapter
 
     # -- 8 methods ----------------------------------------------------------
 
@@ -291,6 +356,8 @@ class RealtimeVenusOmniAdapter:
                 await self._close_locked(old, "lease_expired")
             incarnation = (self._session.incarnation + 1) if self._session else 1
             sess = _Session(session_id, incarnation, model)
+            # The peak then measures this session alone.
+            _reset_gpu_peak()
             # Re-prepare the model for this session (prepare is session-scoped,
             # single-use: reset_memory first if a previous session used it).
             await asyncio.to_thread(self._prepare_for_session, length_penalty)
@@ -566,6 +633,13 @@ class RealtimeVenusOmniAdapter:
             "system_prompt_preview": (sp[:120] + "…") if sp else None,
         }
 
+    async def stats(self) -> dict[str, Any]:
+        return {
+            "gpu_memory_after_load": self._memory_after_load,
+            "gpu_memory": gpu_memory(),
+            "steps": self._steps.summary(),
+        }
+
     # -- driver -------------------------------------------------------------
 
     async def _driver_loop(self) -> None:
@@ -581,8 +655,10 @@ class RealtimeVenusOmniAdapter:
                     if sess.output_requested:
                         sess.output_inflight = True
                         try:
+                            started = time.perf_counter()
                             acted = await self._step_once(sess)
                             if acted:
+                                self._steps.add((time.perf_counter() - started) * 1000)
                                 sess.output_requested = False
                         finally:
                             sess.output_inflight = False

@@ -179,3 +179,24 @@ docker compose down        # 停止并删除容器
 | `deploy/web/data/harness.json` | 保存的任务、提供方和发言长度设置，包括 Gemini 密钥。 |
 | `deploy/web/data/codex/` | Codex 登录与会话状态。 |
 | `deploy/web/data/<任务目录>/` | 任务文件。生成文件在会话结束后仍保留；网页下载链接只在对应会话内有效。 |
+
+### 容量测量
+
+模型服务在 `/stats` 报告自己的测量值，访问时需要带令牌：
+
+```bash
+curl -s -H "Authorization: Bearer $VENUS_MODEL_TOKEN" http://10.194.99.8:8031/stats
+```
+
+| 字段 | 含义 |
+| --- | --- |
+| `gpu_memory_after_load.allocated_mib` | 刚加载完时的显存：每个实例都会重复占用的权重。 |
+| `gpu_memory.peak_allocated_mib` | 当前这段对话开始以来的峰值。减去上一项，就是一段对话自己的状态（缓存、视频记忆）。 |
+| `gpu_memory.device_used_mib` / `device_total_mib` | 整张 GPU 的占用，包括其他实例。 |
+| `steps.p50_ms` / `p95_ms` / `max_ms` | 最近 600 步（约 10 分钟）每步生成的耗时。每段对话每秒需要一步，所以共用一张 GPU 的所有对话，步骤加起来必须在 1000 毫秒内完成。 |
+
+测量方法：
+
+1. 一张 GPU 跑一个实例：进行一段 10 分钟的摄像头对话，结束时读取 `/stats`。
+2. 同一张 GPU 跑两个实例：在 `deploy/model` 目录用 `MODEL_PORT=8033 docker compose -p realtime-venus-model-2 up -d` 启动第二个实例。在你的电脑上，把 `deploy/web/data` 复制为 `deploy/web/data2`（带上设置和 Codex 登录），再用 `WEB_PORT=8034 MODEL_URL=http://10.194.99.8:8033 DATA_DIR=./data2 docker compose -p realtime-venus-web-2 up -d` 启动第二个网页服务。同时进行两段对话（http://localhost:8032 和 http://localhost:8034），分别读取 8031 和 8033 端口的 `/stats`。
+3. 比较两次的 `p95_ms`，记下两个显存数字。测完用 `docker compose -p realtime-venus-model-2 down` 和 `docker compose -p realtime-venus-web-2 down` 停掉第二组。

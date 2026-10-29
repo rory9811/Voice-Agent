@@ -4,7 +4,7 @@
 !.env.example
 
 # Checkpoints, container data and generated outputs
-/deploy/web/data/
+/deploy/web/data*/
 /model_weight/
 /Realtime-Venus-Audio/
 /Realtime-Venus-Omni/

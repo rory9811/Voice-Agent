@@ -180,3 +180,24 @@ After pulling new code, rebuild with `docker compose up -d --build`. Containers 
 | `deploy/web/data/harness.json` | Saved task, provider and speaking-length settings, including any Gemini key. |
 | `deploy/web/data/codex/` | Codex login and session state. |
 | `deploy/web/data/<workspace>/` | Task files. Generated files remain after a session; browser download links are session-scoped. |
+
+### Capacity measurement
+
+The model server reports its own measurements at `/stats`, which needs the token:
+
+```bash
+curl -s -H "Authorization: Bearer $VENUS_MODEL_TOKEN" http://10.194.99.8:8031/stats
+```
+
+| Field | Meaning |
+| --- | --- |
+| `gpu_memory_after_load.allocated_mib` | Memory right after loading: the weights that every instance repeats. |
+| `gpu_memory.peak_allocated_mib` | Peak since the current conversation started. Minus the value above, it is one conversation's own state (caches, video memory). |
+| `gpu_memory.device_used_mib` / `device_total_mib` | The whole GPU, including other instances. |
+| `steps.p50_ms` / `p95_ms` / `max_ms` | Time per model step over the last 600 steps (about 10 minutes). Each conversation needs one step per second, so the steps of all conversations sharing a GPU must fit in 1000 ms. |
+
+To measure:
+
+1. One instance on the GPU: hold a 10-minute camera conversation, then read `/stats`.
+2. Two instances on the same GPU: in `deploy/model`, start a second one with `MODEL_PORT=8033 docker compose -p realtime-venus-model-2 up -d`. On your computer, copy `deploy/web/data` to `deploy/web/data2` (settings and Codex login), then start a second web service with `WEB_PORT=8034 MODEL_URL=http://10.194.99.8:8033 DATA_DIR=./data2 docker compose -p realtime-venus-web-2 up -d`. Hold two conversations at once (http://localhost:8032 and http://localhost:8034) and read `/stats` on ports 8031 and 8033.
+3. Compare `p95_ms` between the two runs, and note the two memory figures. Stop the second pair with `docker compose -p realtime-venus-model-2 down` and `docker compose -p realtime-venus-web-2 down`.
