@@ -27,7 +27,7 @@ The model service runs on a GPU server; every other component runs on your compu
 
 ## Prepare
 
-**GPU server (model).** A Linux server with an NVIDIA CUDA GPU, a working driver, Docker Engine with Compose, and the NVIDIA Container Toolkit (so containers can use the GPU). Download the complete checkpoint for your mode there following the [model download guide](../README.md#1-installation), retaining its model code, tokenizer, reference audio, and speech assets. The default downloader places it in `Realtime-Venus-Omni/` or `Realtime-Venus-Audio/` at the repository root, which is what `MODEL_DIR` in `deploy/model/.env.example` points to.
+**GPU server (model).** A Linux server with an NVIDIA CUDA GPU, a working driver, Docker Engine with Compose, and the NVIDIA Container Toolkit (so containers can use the GPU). Download the complete checkpoint for your mode there following the [model download guide](../README.md#1-installation), retaining its model code, tokenizer, reference audio, and speech assets. The default downloader places it in `Realtime-Venus-Omni/` or `Realtime-Venus-Audio/` at the repository root, next to the `config.yaml` both checkpoints read; `MODEL_DIR` in `deploy/model/.env.example` points to that root.
 
 **Your computer (web service, Harness, task agent).** macOS or Linux with Docker Desktop or Docker Engine; no GPU or checkpoint is needed — the tokenizer is read from the model server. The task agent (Codex or Claude Code) requires network access and a one-time login inside the container.
 
@@ -108,13 +108,13 @@ The model serves **one active conversation**. If the web service stops without c
 | Field | Default | Purpose |
 | --- | --- | --- |
 | `MODEL_TYPE` | `omni` | `omni`: camera with microphone and video upload; `audio`: microphone and audio upload. |
-| `MODEL_DIR` | — (required) | Complete checkpoint directory, or the download root containing both variants. Relative paths start with `./` or `../` and are relative to `deploy/model` (without the prefix, Compose creates an empty named volume). Mounted read-only. |
+| `MODEL_DIR` | — (required) | Download root holding `config.yaml` and the checkpoint folders; the server picks the folder for `MODEL_TYPE`. Relative paths start with `./` or `../` and are relative to `deploy/model` (without the prefix, Compose creates an empty named volume). Mounted read-only. |
 | `REFERENCE_AUDIO` | `assets/HT_ref_audio.wav` | Reference voice, relative to the selected checkpoint folder. |
 | `MODEL_PORT` | `8031` | Port your computer uses to reach the model. |
 | `MEMORY_MINUTES` | `40` | Omni video memory in minutes; unused by Audio. |
 | `GPU_DEVICE` | `0` | GPU index. |
 | `VENUS_MODEL_TOKEN` | — (required) | Shared secret; every request except `/healthz` must carry it. |
-| `PYTHON_IMAGE` / `PIP_INDEX_URL` | `python:3.11-slim` / PyPI | Base image and package index for the build; point them at mirrors if needed. |
+| `PYTHON_IMAGE` / `PIP_INDEX_URL` | `python:3.11.18-slim-trixie@sha256:6737…` / PyPI | Base image and package index for the build; point them at mirrors if needed. |
 
 **Web service** (`deploy/web/.env`):
 
@@ -126,9 +126,9 @@ The model serves **one active conversation**. If the web service stops without c
 | `MODEL_TIMEOUT_S` | `180` | Model request timeout in seconds. |
 | `DATA_DIR` | `./data` | Settings (`harness.json`), agent logins (`codex/`, `claude/`) and task files. Relative paths start with `./` and are relative to `deploy/web`. |
 | `GEMINI_API_KEY` | empty | Optional official Gemini key; it can also be entered in Settings. |
-| `PYTHON_IMAGE` / `PIP_INDEX_URL` | `python:3.11-slim` / PyPI | Base image and package index for the build. |
+| `PYTHON_IMAGE` / `PIP_INDEX_URL` | `python:3.11.18-slim-trixie@sha256:6737…` / PyPI | Base image and package index for the build. |
 
-After editing a `.env`, apply it with `docker compose up -d` in the same folder. To switch modes, change `MODEL_TYPE` and `MODEL_DIR` on the server and run `docker compose up -d` there, then `docker compose restart` in `deploy/web` so the web service reads the new model type.
+After editing a `.env`, apply it with `docker compose up -d` in the same folder. To switch modes, change `MODEL_TYPE` on the server (the other checkpoint must be downloaded into the same root) and run `docker compose up -d` there, then `docker compose restart` in `deploy/web` so the web service reads the new model type.
 
 **Harness settings** (`deploy/web/data/harness.json`) are written by the browser Settings panel on first save, starting from the defaults in the standalone package's [configuration file](../harness/config.json). They control the task agent (`agent`: `codex` or `claude`, with its own `codex` / `claude` section; timeouts, vision and network settings stay in `codex` for both), routing, Polish (`responses`), multimodal, Gemini, workspace, progress feedback, execution/queue/delivery timeouts, component budgets, and the speaking length. See the [Harness guide](../harness/README.md#configuration-file) for each field; relative paths inside the file resolve from `deploy/web/data`.
 

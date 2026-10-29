@@ -1,5 +1,9 @@
 # Realtime-Venus web service, Harness and tokenizer (local computer; no torch)
 -r ../harness/requirements.txt
+# Exact versions of everything installed, transitive packages included. To change or
+# add a package, delete its line from constraints-web.txt (if any), rebuild,
+# then replace that file with: docker run --rm --entrypoint pip realtime-venus-web freeze --all
+-c constraints-web.txt
 # Tokenizer only: decodes model token IDs fetched from the model server.
 transformers==4.51.3
 

@@ -33,6 +33,9 @@ def checkpoint_directory(path: Path, model_type: str | None = None) -> Path:
     config = json.loads((path / "config.json").read_text())
     if not isinstance(config, dict):
         raise ValueError("Model config.json must contain an object")
+    # The checkpoint's config.json only points at the full config: config.yaml in its download root.
+    if "venus_config_ref" in config:
+        checked_file(path.parent / "config.yaml")
     architecture = config.get("model_type")
     checkpoint_type = {"realtime_venus_omni": "omni", "minicpmo": "audio"}.get(architecture)
     if model_type and checkpoint_type and model_type != checkpoint_type:

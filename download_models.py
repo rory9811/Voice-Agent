@@ -13,6 +13,8 @@ from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 
 
 REPO_ID = "inclusionAI/Realtime-Venus"
+# Hub commit downloaded by default, so reruns fetch the same files.
+REVISION = "a1d95d3ac61416c8db34736b152241396850a6ed"
 MANIFEST = "config.yaml"
 MODEL_CHOICES = ("omni", "audio", "all")
 
@@ -100,7 +102,7 @@ def _verify_downloads(
 def download_models(
     model: str = "all",
     local_dir: str | Path = ".",
-    revision: str = "main",
+    revision: str = REVISION,
     max_workers: int = 8,
     token: str | bool | None = None,
 ) -> dict[str, Path]:
@@ -173,7 +175,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", choices=MODEL_CHOICES, default="all")
     parser.add_argument("--local-dir", default=".", help="Destination root (default: current directory)")
-    parser.add_argument("--revision", default="main", help="Hub branch, tag, or commit (default: main)")
+    parser.add_argument("--revision", default=REVISION, help=f"Hub branch, tag, or commit (default: {REVISION[:7]})")
     parser.add_argument("--max-workers", type=int, default=8, help="Concurrent file downloads (default: 8)")
     args = parser.parse_args()
     try:
