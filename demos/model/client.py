@@ -336,18 +336,28 @@ class RemoteOmniServingPort:
 
     async def _pump(self, ws: ClientConnection, sent: int) -> None:
         """Run one connection until it ends; raises if the session cannot go on."""
+        reader = asyncio.create_task(self._read(ws))
         writer = asyncio.create_task(self._write(ws, sent))
         try:
-            while True:
-                try:
-                    data = await ws.recv()
-                except ConnectionClosed as exc:
-                    _rejected(exc)
-                    return
-                self._receive(data)
+            await asyncio.wait([reader, writer], return_when=asyncio.FIRST_COMPLETED)
+            # The writer only ends by failing. A dropped connection still lets the
+            # reader drain what already arrived (maybe ``closed``); anything else is fatal.
+            if writer.done() and not isinstance(writer.exception(), ConnectionClosed):
+                writer.result()
+            await reader
         finally:
-            writer.cancel()
-            await asyncio.gather(writer, return_exceptions=True)
+            for task in (reader, writer):
+                task.cancel()
+            await asyncio.gather(reader, writer, return_exceptions=True)
+
+    async def _read(self, ws: ClientConnection) -> None:
+        while True:
+            try:
+                data = await ws.recv()
+            except ConnectionClosed as exc:
+                _rejected(exc)
+                return
+            self._receive(data)
 
     async def _write(self, ws: ClientConnection, sent: int) -> None:
         """Send the outbox after ``sent``, then a ``state`` whenever ``consumed`` grew."""

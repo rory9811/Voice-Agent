@@ -174,6 +174,14 @@ class ModelLinkTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RemoteSessionClosed):
             await waiting
 
+    async def test_writer_failure_ends_the_session(self):
+        port = await self.open()
+        unencodable = lambda kind, request: {"type": kind, "bad": object()}  # noqa: E731
+        with patch("demos.model.client._header", unencodable):
+            self.send_audio(port)
+        with self.assertLogs("demos.model.client", "ERROR"), self.assertRaises(RemoteServingError):
+            await port.next_event(timeout_s=2.0)
+
     async def test_gaps_are_logged_at_close(self):
         port = await self.open()
         self.send_audio(port)
