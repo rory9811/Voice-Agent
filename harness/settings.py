@@ -8,7 +8,7 @@ from dataclasses import asdict, fields, is_dataclass, replace
 from pathlib import Path
 
 from harness.agents.config import GeneralAgentConfig
-from harness.config import GeminiConfig, ModelCallConfig, RoutingConfig
+from harness.config import AGENTS, GeminiConfig, ModelCallConfig, RoutingConfig
 from harness.core.config import HarnessConfig
 from harness.jobs.feedback import FeedbackConfig
 from harness.bridge.config import venus_harness_config
@@ -21,11 +21,14 @@ def template():
         "version": 1,
         "language": "zh",
         "workspace": "",
+        "agent": "codex",
+        # Shared runtime knobs (vision, timeouts, network) stay here for both agents.
         "codex": {
             key: value
             for key, value in asdict(GeneralAgentConfig(effort="low")).items()
-            if key not in {"workspace", "approval_policy", "sandbox", "queue_timeout_s"}
+            if key not in {"workspace", "approval_policy", "sandbox", "queue_timeout_s", "agent"}
         },
+        "claude": {"command": ["claude"], "model": None, "effort": "low"},
         "routing": asdict(RoutingConfig()),
         "responses": asdict(ModelCallConfig()),
         "multimodal": asdict(ModelCallConfig()),
@@ -119,9 +122,34 @@ class HarnessSetup:
         self.general = settings(
             GeneralAgentConfig(workspace=str(self.workspace)), codex
         )
+        if self.data["agent"] not in AGENTS:
+            raise ValueError("Task agent must be codex or claude")
+        if self.data["agent"] == "claude":
+            claude = self.data["claude"]
+            if (
+                not isinstance(claude, dict)
+                or claude.keys() - {"command", "model", "effort"}
+                or not isinstance(claude.get("command"), (list, tuple))
+            ):
+                raise ValueError("Invalid Claude Code settings")
+            self.general = replace(
+                self.general,
+                agent="claude",
+                command=tuple(claude["command"]),
+                model=claude["model"],
+                effort=claude["effort"],
+            )
         self.routing = settings(RoutingConfig(), self.data["routing"])
         self.responses = settings(ModelCallConfig(), self.data["responses"])
         self.multimodal = settings(ModelCallConfig(), self.data["multimodal"])
+        # Selecting an agent must leave no role on the other one.
+        if any(
+            call.provider not in {self.general.agent, "gemini"}
+            for call in (self.routing, self.responses, self.multimodal)
+        ):
+            raise ValueError(
+                "Role providers must be the task agent or gemini / 各环节只能使用当前任务执行器或 Gemini"
+            )
         self.gemini = settings(GeminiConfig(), self.data["gemini"])
         self.feedback = settings(FeedbackConfig(), self.data["feedback"])
         if self.feedback.journal_path and self.feedback.journal_path != ":memory:":
@@ -159,7 +187,8 @@ class HarnessSetup:
         if web and not self.data["workspace"]:
             problems.append("Configure Task workspace / 请填写任务工作目录")
         if not shutil.which(self.general.command[0]):
-            problems.append("Codex executable not found / 找不到 Codex 程序")
+            name = {"codex": "Codex", "claude": "Claude Code"}[self.general.agent]
+            problems.append(f"{name} executable not found / 找不到 {name} 程序")
         calls = [self.responses, self.multimodal]
         if self.routing.mode == "auto":
             calls.append(self.routing)

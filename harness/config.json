@@ -2,6 +2,7 @@
   "version": 1,
   "language": "zh",
   "workspace": "",
+  "agent": "codex",
   "codex": {
     "command": [
       "codex",
@@ -25,6 +26,13 @@
     "execution_timeout_s": 1800,
     "interrupt_timeout_s": 10,
     "result_ttl_s": 300
+  },
+  "claude": {
+    "command": [
+      "claude"
+    ],
+    "model": null,
+    "effort": "low"
   },
   "routing": {
     "model": null,

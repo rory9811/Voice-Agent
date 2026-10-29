@@ -1,4 +1,4 @@
-"""Model-call settings for Codex and optional official Gemini roles."""
+"""Model-call settings for the task agent (Codex or Claude Code) and optional official Gemini roles."""
 
 import math
 import os
@@ -6,7 +6,11 @@ import re
 from dataclasses import dataclass, field
 
 
-REASONING_EFFORTS = frozenset({"minimal", "low", "medium", "high", "xhigh"})
+AGENTS = ("codex", "claude")
+REASONING_EFFORTS = {
+    "codex": frozenset({"minimal", "low", "medium", "high", "xhigh"}),
+    "claude": frozenset({"low", "medium", "high", "xhigh", "max"}),
+}
 ROUTING_MODES = frozenset({"general", "auto"})
 
 
@@ -15,12 +19,14 @@ def validate_routing_mode(mode):
         raise ValueError("Routing mode must be general or auto")
 
 
-def validate_model_options(model, effort, *, allow_inherit=False):
+def validate_model_options(model, effort, *, provider="codex", allow_inherit=False):
     if model is not None and not isinstance(model, str):
         raise ValueError("Model must be a name or null")
     if allow_inherit and effort is None:
         return
-    if not isinstance(effort, str) or effort not in REASONING_EFFORTS:
+    # Gemini is never sent an effort, so either agent's levels may stay stored.
+    efforts = REASONING_EFFORTS.get(provider) or frozenset().union(*REASONING_EFFORTS.values())
+    if not isinstance(effort, str) or effort not in efforts:
         raise ValueError("Invalid reasoning effort")
 
 
@@ -34,9 +40,9 @@ class ModelCallConfig:
     provider: str = "codex"
 
     def __post_init__(self):
-        validate_model_options(self.model, self.effort)
-        if self.provider not in {"codex", "gemini"}:
-            raise ValueError("Provider must be codex or gemini")
+        if self.provider not in {*AGENTS, "gemini"}:
+            raise ValueError("Provider must be codex, claude or gemini")
+        validate_model_options(self.model, self.effort, provider=self.provider)
         if self.provider == "gemini" and self.model:
             validate_gemini_model(self.model)
         if (
