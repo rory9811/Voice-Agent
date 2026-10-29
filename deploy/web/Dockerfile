@@ -6,7 +6,6 @@ ARG PIP_INDEX_URL=https://pypi.org/simple
 ARG CODEX_VERSION=0.153.4
 ARG TARGETARCH
 ENV PIP_INDEX_URL=${PIP_INDEX_URL} \
-    PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -28,7 +27,8 @@ open('/usr/local/bin/codex', 'wb').write(archive.extractfile(name).read())" \
 WORKDIR /app
 COPY harness/requirements.txt harness/
 COPY demos/requirements-web.txt demos/
-RUN pip install -r demos/requirements-web.txt
+# Downloaded wheels stay in BuildKit's cache, so a rebuild downloads only packages it has not seen.
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r demos/requirements-web.txt
 COPY harness harness
 COPY demos demos
 
