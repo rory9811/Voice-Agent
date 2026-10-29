@@ -112,6 +112,13 @@ class ModelLinkTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(caught.exception.code, code)
         self.assertTrue(first.link_up)
 
+    async def test_model_failure_on_open_is_reported(self):
+        self.adapter._model.prepare.side_effect = RuntimeError("CUDA out of memory")
+        with self.assertLogs("demos.model.server", "ERROR"), self.assertRaises(RemoteServingError) as caught:
+            await self.open()
+        self.assertNotIsInstance(caught.exception, RemoteModelUnavailable)
+        self.assertIn("CUDA out of memory", str(caught.exception))
+
     async def test_wrong_token_is_named(self):
         async with serve_model(omni_adapter(), token="secret") as url:
             with self.assertRaises(RemoteServingError) as caught:
@@ -165,8 +172,9 @@ class ModelLinkTests(unittest.IsolatedAsyncioTestCase):
         with patch("demos.model.client.CLOSE_TIMEOUT_S", 0.5):
             proxy.drop_all()
             proxy.refuse_for(3)
-            while port.link_up:
-                await asyncio.sleep(0.01)
+            async with asyncio.timeout(5):
+                while port.link_up:
+                    await asyncio.sleep(0.01)
             started = time.monotonic()
             with self.assertRaises(RemoteServingError):
                 await self.close(port)

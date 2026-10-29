@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
-from starlette.websockets import WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 
 from demos.model.adapter import PROTOCOL_TOKENS, RealtimeVenusOmniAdapter
 from demos.model.server import _ServerConfig, create_app
@@ -152,6 +152,13 @@ class SessionSocketTests(unittest.TestCase):
             with self.connect(client) as ws:
                 ws.send_bytes(resume_frame({"session_id": "gone", "incarnation": 9}))
                 self.receive_error(ws, "session_lost")
+            for missing in ("protocol_version", "session_id", "model"):
+                with self.subTest(missing=missing), self.connect(client) as ws:
+                    header = decode_frame(open_frame())[0]
+                    del header[missing]
+                    ws.send_bytes(encode_frame(header))
+                    self.assertIn(missing, self.receive_error(ws, "protocol")["error"])
+                    self.assertClosed(ws, 1011)
 
     def test_client_close_drains_then_ends_normally(self):
         with self.client() as client, self.connect(client) as ws:
@@ -189,10 +196,14 @@ class SessionSocketTests(unittest.TestCase):
             with self.subTest(bad_seq=bad_seq), self.client() as client, self.connect(client) as ws:
                 self.open(ws)
                 sess = self.adapter._session
+                real_send_bytes = WebSocket.send_bytes
 
-                async def peer_gone(_ws, _data):
+                async def peer_gone(_ws, data):
+                    if _ws.application_state is WebSocketState.DISCONNECTED:
+                        return await real_send_bytes(_ws, data)  # Starlette refuses it
                     while sess.inbox.last < bad_seq:  # the reader has not met the bad frame yet
                         await asyncio.sleep(0.005)
+                    _ws.application_state = WebSocketState.DISCONNECTED  # as Starlette does on OSError
                     raise WebSocketDisconnect(1006)
 
                 detached = threading.Event()

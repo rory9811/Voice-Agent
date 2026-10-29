@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.requests import HTTPConnection
 from fastapi.responses import JSONResponse
+from fastapi.websockets import WebSocketState
 
 from demos.model import wire
 from demos.model.adapter import AdapterError, ModelNotLoaded, RealtimeVenusOmniAdapter, _Session
@@ -146,8 +147,15 @@ async def _serve_session(ws: WebSocket, adapter: RealtimeVenusOmniAdapter) -> No
             reply, sent = {"type": "resumed"}, header["ack"]
         else:
             raise AdapterError(f"the first frame must be open or resume, got {header['type']!r}")
+    except WebSocketDisconnect:
+        raise
     except AdapterError as exc:
         await ws.send_bytes(_error(exc.code, str(exc), 0))  # no session is attached yet
+        await ws.close(1011)
+        return
+    except Exception as exc:  # noqa: BLE001 - e.g. prepare ran out of GPU memory
+        _LOG.exception("opening the session failed")
+        await ws.send_bytes(_error("model_error", f"{type(exc).__name__}: {exc}", 0))
         await ws.close(1011)
         return
     try:
@@ -163,12 +171,16 @@ async def _serve_session(ws: WebSocket, adapter: RealtimeVenusOmniAdapter) -> No
         if code is not None:
             await ws.close(code)
         elif reader.done() and (exc := reader.result()) is not None:
+            # Starlette refuses any send once the writer has met the peer's disconnect.
+            live = ws.application_state is WebSocketState.CONNECTED
             try:
-                await ws.send_bytes(_error(exc.code, str(exc), sess.inbox.last))
+                if live:
+                    await ws.send_bytes(_error(exc.code, str(exc), sess.inbox.last))
             finally:
                 # Even if the peer is gone: a broken session must never be resumed.
                 await adapter.close_session(sess, "protocol_error")
-            await ws.close(1011)
+            if live:
+                await ws.close(1011)
     finally:
         adapter.detach(sess, link)
 

@@ -210,6 +210,24 @@ class DriverTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.sess.driver.done())
         model.as_simplex.assert_called_once()
 
+    async def test_step_interrupted_by_a_close_is_not_an_error(self):
+        entered, gate = threading.Event(), threading.Event()
+
+        def interrupted(**_):  # the stop request makes the running step raise
+            entered.set()
+            gate.wait(5)
+            raise RuntimeError("session stopped")
+
+        self.adapter._model.streaming_generate.side_effect = interrupted
+        self.audio()
+        await until(entered.is_set)
+        with self.assertNoLogs("demos.model.adapter", "ERROR"):
+            self.send("close", reason="client_close")
+            gate.set()
+            await asyncio.wait_for(self.link.wait(), 2)
+        self.assertIsNone(self.sess.failure)
+        self.assertEqual(self.sent()[-1]["type"], "closed")
+
     async def test_model_error_closes_without_a_closed_frame(self):
         self.adapter._model.streaming_generate.side_effect = RuntimeError("boom")
         with self.assertLogs("demos.model.adapter", "ERROR"):

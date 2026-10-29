@@ -317,17 +317,17 @@ class RealtimeVenusOmniAdapter:
     async def open_session(
         self, req: dict[str, Any], link: asyncio.Event
     ) -> tuple[_Session, dict[str, Any]]:
-        protocol = req.get("protocol_version", sw.PROTOCOL_VERSION)
+        protocol = _checked(req, "protocol_version", str)
         if protocol != sw.PROTOCOL_VERSION:
             raise AdapterError(f"unsupported protocol_version: {protocol!r}")
-        session_id = str(req["session_id"])
-        model = str(req["model"])
+        session_id = _checked(req, "session_id", str)
+        model = _checked(req, "model", str)
         if model != self._model_name:
             raise ModelMismatch(
                 f"model mismatch: server serves {self._model_name}, client requested {model}"
             )
         try:
-            # Older non-browser clients keep the checkpoint's original behavior.
+            # length_penalty is optional; without it the checkpoint decodes as released.
             length_penalty = DuplexSettings(
                 length_penalty=req.get("length_penalty", 1.0)
             ).length_penalty
@@ -640,9 +640,11 @@ class RealtimeVenusOmniAdapter:
                     continue
                 await asyncio.sleep(0.02)
         except Exception as exc:  # noqa: BLE001 - never let the driver die silently
-            _LOG.exception("driver loop crashed")
             # A step the stop request interrupted is the close itself, not a failure.
-            if not sess.closed:
+            if sess.closed:
+                _LOG.debug("step ended by the close", exc_info=True)
+            else:
+                _LOG.exception("driver loop crashed")
                 sess.failure = f"{type(exc).__name__}: {exc}"
                 # The close waits for this task to end, so it cannot be awaited here.
                 self._begin_close(sess, "model_error")
