@@ -1,4 +1,4 @@
-import { t } from "./i18n.js?v=20260921-model-modes";
+import { t } from "./i18n.js?v=20261029-task-agent";
 const terminal = new Set(["delivered", "failed", "cancelled"]);
 function icon(name) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");

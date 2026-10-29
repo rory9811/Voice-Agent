@@ -171,13 +171,19 @@ cp .env.example .env
 docker compose up -d
 ```
 
-在容器里登录一次 Codex：
+后台任务可以用 Codex 或 Claude Code 执行，在容器里登录一次要用的那个。Codex：
 
 ```bash
 docker compose exec web codex login --device-auth
 ```
 
-打开 [http://localhost:8032](http://localhost:8032)，完成 Settings（例如任务工作目录填 `workspace`）后开始对话。网页服务从模型服务读取模型类型和 tokenizer，本地不需要权重。所有设置项与服务管理详见 [Demo 文档](demos/README_ZH.md)。
+或 Claude Code，用你的 Claude 订阅账号登录（任务只使用订阅额度，不会走 API 计费）：
+
+```bash
+docker compose exec -it web claude auth login
+```
+
+打开 [http://localhost:8032](http://localhost:8032)，完成 Settings（例如任务工作目录填 `workspace`；登录的是 Claude Code 时，把“任务执行器”选为 Claude Code）后开始对话。网页服务从模型服务读取模型类型和 tokenizer，本地不需要权重。所有设置项与服务管理详见 [Demo 文档](demos/README_ZH.md)。
 
 ### 4. Android 演示应用（Beta）
 

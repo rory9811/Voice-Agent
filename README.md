@@ -171,13 +171,19 @@ Set `MODEL_URL` to the server's address (for example `http://10.194.99.8:8031`) 
 docker compose up -d
 ```
 
-Log in to Codex once inside the container:
+Background tasks run on Codex or Claude Code. Log in to the one you will use once inside the container — Codex:
 
 ```bash
 docker compose exec web codex login --device-auth
 ```
 
-Open [http://localhost:8032](http://localhost:8032), complete Settings (for example task workspace `workspace`) and start a conversation. The web service reads the model type and tokenizer from the model server, so your computer needs no checkpoint. See the [Demo guide](demos/README.md) for every setting and for service management.
+or Claude Code, with your Claude subscription account (tasks then use subscription usage only, never API billing):
+
+```bash
+docker compose exec -it web claude auth login
+```
+
+Open [http://localhost:8032](http://localhost:8032), complete Settings (for example task workspace `workspace`; choose **Task agent: Claude Code** if you logged in to Claude Code) and start a conversation. The web service reads the model type and tokenizer from the model server, so your computer needs no checkpoint. See the [Demo guide](demos/README.md) for every setting and for service management.
 
 ### 4. Android Demo (Beta)
 

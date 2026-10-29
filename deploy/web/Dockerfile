@@ -1,20 +1,29 @@
-# Realtime-Venus web service, Harness and Codex. Built from the repository root by compose.yaml.
+# Realtime-Venus web service, Harness and the task agents (Codex, Claude Code). Built from the repository root by compose.yaml.
 ARG PYTHON_IMAGE=python:3.11.18-slim-trixie@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438a42ced8bedf60
 FROM ${PYTHON_IMAGE}
 
 ARG PIP_INDEX_URL=https://pypi.org/simple
 ARG CODEX_VERSION=0.153.4
+ARG CLAUDE_CODE_VERSION=2.1.309
 ARG TARGETARCH
 ENV PIP_INDEX_URL=${PIP_INDEX_URL} \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    CODEX_HOME=/data/codex
+    CODEX_HOME=/data/codex \
+    CLAUDE_CONFIG_DIR=/data/claude \
+    DISABLE_AUTOUPDATER=1
 
-# Codex runs task commands inside a bubblewrap sandbox and expects git, curl and rg.
+# Both agents run task commands inside a bubblewrap sandbox and expect git, curl and rg;
+# Claude Code's sandbox also relays network traffic through socat.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends bubblewrap ca-certificates curl git ripgrep \
+    && apt-get install -y --no-install-recommends bubblewrap ca-certificates curl git ripgrep socat \
     && rm -rf /var/lib/apt/lists/*
+# Official installer at a pinned version; the binary is copied out of root's home.
+RUN curl -fsSL https://claude.ai/install.sh | bash -s ${CLAUDE_CODE_VERSION} \
+    && install -m 755 "$(readlink -f /root/.local/bin/claude)" /usr/local/bin/claude \
+    && rm -rf /root/.local /root/.claude /root/.claude.json \
+    && claude --version
 RUN python -c "import io, os, tarfile, urllib.request; \
 arch = {'amd64': 'x86_64', 'arm64': 'aarch64'}[os.environ['TARGETARCH']]; \
 name = f'codex-{arch}-unknown-linux-musl'; \
@@ -37,5 +46,5 @@ RUN useradd --create-home --uid 1000 venus
 USER venus
 
 EXPOSE 8032
-# CODEX_HOME lives on the /data mount, which starts empty; Codex refuses a missing one.
-ENTRYPOINT ["sh", "-c", "mkdir -p \"$CODEX_HOME\" && exec python -m demos.server.cli \"$@\"", "web"]
+# Both agent homes live on the /data mount, which starts empty; Codex refuses a missing one.
+ENTRYPOINT ["sh", "-c", "mkdir -p \"$CODEX_HOME\" \"$CLAUDE_CONFIG_DIR\" && exec python -m demos.server.cli \"$@\"", "web"]

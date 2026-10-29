@@ -29,7 +29,7 @@ The model service runs on a GPU server; every other component runs on your compu
 
 **GPU server (model).** A Linux server with an NVIDIA CUDA GPU, a working driver, Docker Engine with Compose, and the NVIDIA Container Toolkit (so containers can use the GPU). Download the complete checkpoint for your mode there following the [model download guide](../README.md#1-installation), retaining its model code, tokenizer, reference audio, and speech assets. The default downloader places it in `Realtime-Venus-Omni/` or `Realtime-Venus-Audio/` at the repository root, next to the `config.yaml` both checkpoints read; `MODEL_DIR` in `deploy/model/.env.example` points to that root.
 
-**Your computer (web service, Harness, Codex).** macOS or Linux with Docker Desktop or Docker Engine; no GPU or checkpoint is needed — the tokenizer is read from the model server. The Codex backend requires network access and a one-time login inside the container.
+**Your computer (web service, Harness, task agent).** macOS or Linux with Docker Desktop or Docker Engine; no GPU or checkpoint is needed — the tokenizer is read from the model server. The task agent (Codex or Claude Code) requires network access and a one-time login inside the container.
 
 <details>
 <summary>Expected checkpoint layout</summary>
@@ -64,7 +64,7 @@ Each side is a Docker Compose project configured by the `.env` file next to its 
 
    Its port (`MODEL_PORT`, 8031 by default) must be reachable from your computer. On a shared server keep `.env` private with `chmod 600 .env`.
 
-2. **Your computer**, in `deploy/web`: `cp .env.example .env`, then set `MODEL_URL` to the server's address (for example `http://10.194.99.8:8031`) and `VENUS_MODEL_TOKEN` to the same secret. Start the web service, then log in to Codex once:
+2. **Your computer**, in `deploy/web`: `cp .env.example .env`, then set `MODEL_URL` to the server's address (for example `http://10.194.99.8:8031`) and `VENUS_MODEL_TOKEN` to the same secret. Start the web service, then log in once to the task agent you will use — Codex, or Claude Code with your Claude subscription account:
 
    ```bash
    docker compose up -d
@@ -74,7 +74,11 @@ Each side is a Docker Compose project configured by the `.env` file next to its 
    docker compose exec web codex login --device-auth
    ```
 
-   If the model server is unreachable, not ready, or rejects the token, the web container exits with that reason in `docker compose logs` and restarts until the model is available. While it is restarting, log in with `docker compose run --rm --entrypoint sh web -c 'mkdir -p "$CODEX_HOME" && codex login --device-auth'` instead.
+   ```bash
+   docker compose exec -it web claude auth login
+   ```
+
+   If the model server is unreachable, not ready, or rejects the token, the web container exits with that reason in `docker compose logs` and restarts until the model is available. While it is restarting, log in with `docker compose run --rm --entrypoint sh web -c 'mkdir -p "$CODEX_HOME" && codex login --device-auth'` (Codex) or `docker compose run --rm -it --entrypoint sh web -c 'mkdir -p "$CLAUDE_CONFIG_DIR" && claude auth login'` (Claude Code) instead.
 
 **Both on one machine:** inside the web container `127.0.0.1` is the container itself, so set `MODEL_URL` to `http://host.docker.internal:8031` (Docker Desktop) or the machine's own address.
 
@@ -120,21 +124,23 @@ The model serves **one active conversation**. If the web service stops without c
 | `VENUS_MODEL_TOKEN` | — (required) | The same secret as on the model server. |
 | `WEB_PORT` | `8032` | The page opens at `http://localhost:<WEB_PORT>`; it is published on loopback only. |
 | `MODEL_TIMEOUT_S` | `180` | Model request timeout in seconds. |
-| `DATA_DIR` | `./data` | Settings (`harness.json`), Codex login (`codex/`) and task files. Relative paths start with `./` and are relative to `deploy/web`. |
+| `DATA_DIR` | `./data` | Settings (`harness.json`), agent logins (`codex/`, `claude/`) and task files. Relative paths start with `./` and are relative to `deploy/web`. |
 | `GEMINI_API_KEY` | empty | Optional official Gemini key; it can also be entered in Settings. |
 | `PYTHON_IMAGE` / `PIP_INDEX_URL` | `python:3.11.18-slim-trixie@sha256:6737…` / PyPI | Base image and package index for the build. |
 
 After editing a `.env`, apply it with `docker compose up -d` in the same folder. To switch modes, change `MODEL_TYPE` on the server (the other checkpoint must be downloaded into the same root) and run `docker compose up -d` there, then `docker compose restart` in `deploy/web` so the web service reads the new model type.
 
-**Harness settings** (`deploy/web/data/harness.json`) are written by the browser Settings panel on first save, starting from the defaults in the standalone package's [configuration file](../harness/config.json). They control Codex, routing, Polish (`responses`), multimodal, Gemini, workspace, progress feedback, execution/queue/delivery timeouts, component budgets, and the speaking length. See the [Harness guide](../harness/README.md#configuration-file) for each field; relative paths inside the file resolve from `deploy/web/data`.
+**Harness settings** (`deploy/web/data/harness.json`) are written by the browser Settings panel on first save, starting from the defaults in the standalone package's [configuration file](../harness/config.json). They control the task agent (`agent`: `codex` or `claude`, with its own `codex` / `claude` section; timeouts, vision and network settings stay in `codex` for both), routing, Polish (`responses`), multimodal, Gemini, workspace, progress feedback, execution/queue/delivery timeouts, component budgets, and the speaking length. See the [Harness guide](../harness/README.md#configuration-file) for each field; relative paths inside the file resolve from `deploy/web/data`.
 
-The web container runs Codex's task sandbox (bubblewrap), which needs the `seccomp=unconfined` and `systempaths=unconfined` options set in `compose.yaml`; without them every task command fails. These options weaken the container's own isolation (every system call allowed, `/proc` unmasked), so the image runs as a non-root user and the page accepts only `localhost` / `127.0.0.1` host names; the sandbox keeps task commands inside the workspace. This setup is tested on macOS with Docker Desktop. On Linux hosts AppArmor may also block the sandbox (`apparmor=unconfined`, untested), and `DATA_DIR` must be writable by uid 1000.
+The web container runs the task agent's sandbox (bubblewrap for both agents; Claude Code also relays network traffic through socat), which needs the `seccomp=unconfined` and `systempaths=unconfined` options set in `compose.yaml`; without them every task command fails. These options weaken the container's own isolation (every system call allowed, `/proc` unmasked), so the image runs as a non-root user and the page accepts only `localhost` / `127.0.0.1` host names; the sandbox keeps task commands inside the workspace. This setup is tested on macOS with Docker Desktop. On Linux hosts AppArmor may also block the sandbox (`apparmor=unconfined`, untested), and `DATA_DIR` must be writable by uid 1000.
 
 ### Browser settings
 
-Task workspace starts empty. In Settings, enter a task directory before starting a conversation, for example `workspace`; relative paths are stored under `deploy/web/data` on your computer. Saved user choices are shown when reopening Settings. Never commit or publish `deploy/web/data/` or either `.env`: they contain settings, keys, the Codex login and task files. If configuration is incomplete, voice, camera and video entry points prompt the user to finish Settings, validating the selected providers only.
+Task workspace starts empty. In Settings, enter a task directory before starting a conversation, for example `workspace`; relative paths are stored under `deploy/web/data` on your computer. Saved user choices are shown when reopening Settings. Never commit or publish `deploy/web/data/` or either `.env`: they contain settings, keys, the agent logins and task files. If configuration is incomplete, voice, camera and video entry points prompt the user to finish Settings, validating the selected providers only.
 
 Before starting a conversation, the browser and WebSocket admission both verify the container's Codex login with `codex login status`. Settings shows the result and offers a recheck button after you run `docker compose exec web codex login --device-auth` in `deploy/web`. Missing credentials, check failures, or a 5-second timeout block new conversations; configuration can still be saved. This checks local CLI login status, not quota or remote service availability.
+
+With **Task agent: Claude Code**, the check runs `claude auth status` instead and passes only for a Claude subscription login (log in with `docker compose exec -it web claude auth login`); an API-key login shows “Not a subscription login” and blocks new conversations. Every Claude Code run removes `ANTHROPIC_*`, `CLAUDE_CODE_USE_*` and `CLAUDE_CODE_OAUTH_TOKEN` from its environment, loads no settings files, and refuses to run unless the CLI first confirms the subscription login. **Keep extra usage (paid usage beyond the subscription) turned off in your Claude account:** the CLI reports extra usage only after a request has already been served, so the task stops after the first such request, not before it. When the subscription usage limit is reached, the task fails and the assistant says the quota is used up; it never switches to Codex or the API. Using your own subscription for yourself is fine; before offering this service to other people, check Anthropic's terms on subscription logins in third-party products.
 
 Automatic spoken task progress is off by default. In Settings → Your conversation, explicitly enable “Speak task progress automatically”, save, and start a new conversation. New progress is spoken in one short sentence. Turning it off does not disable execution, final results, or progress you ask for. The boolean `feedback.proactive_progress` defaults to `false` in `deploy/web/data/harness.json`; this setting is shared by users of the service.
 
@@ -143,19 +149,20 @@ End the current conversation before saving settings. Task options and speaking l
 | Setting | Default | Effect |
 | --- | --- | --- |
 | **Task mode** | General | Sends each delegate straight to the task agent, without a routing model call. Select Auto for automatic capability selection and task continuation. |
-| **Task execution** | Codex default model, `low` effort | Controls the background worker. |
+| **Task agent** | Codex | Codex or Claude Code runs every background task and every agent-provided role below; switching moves those roles to the selected agent. |
+| **Task execution** | Agent default model, `low` effort | Controls the background worker. |
 | **Auto routing** | Task model, `low`, 30 seconds | Used only in Auto mode. A timeout ends the routing request without launching its worker. |
-| **Polish** | Codex, task model, `low` | Independently select official Gemini for progress and result preparation; the three-sentence cap remains. |
-| **Multimodal** | Codex, task model, `low` | Independently select official Gemini for direct answers/media understanding when Auto routes to this capability. |
+| **Polish** | Task agent, task model, `low` | Independently select official Gemini for progress and result preparation; the three-sentence cap remains. |
+| **Multimodal** | Task agent, task model, `low` | Independently select official Gemini for direct answers/media understanding when Auto routes to this capability. |
 | **Speaking length** | `length_penalty = 0.8` | Values below 1 encourage earlier turn endings; 1 preserves the original behavior; values above 1 encourage longer turns. Range: 0.1–5. |
 
-Blank Codex model names inherit the task model, then Codex's default. Blank Gemini model names use the default Gemini model below (`gemini-flash-latest` initially; a fixed version can be entered). Reasoning-effort settings apply only to Codex; Gemini uses its model defaults. Legacy shared Direct settings migrate into the independent Multimodal section.
+Blank agent model names inherit the task model, then the agent's default. Blank Gemini model names use the default Gemini model below (`gemini-flash-latest` initially; a fixed version can be entered). Reasoning effort applies only to the agents (Codex: `minimal`–`xhigh`; Claude Code: `low`–`max`); Gemini uses its model defaults. Legacy shared Direct settings migrate into the independent Multimodal section.
 
 #### Official Gemini
 
 1. Enter a Google AI Studio API key in Settings → Task connection → Official Gemini connection, or set `GEMINI_API_KEY` in `deploy/web/.env` and run `docker compose up -d`.
-2. Independently select Codex or Gemini for Polish, Auto routing, and Multimodal, with optional role-specific model IDs. Selecting Gemini sends that role's text/media to Google's API.
-3. Save and start a new conversation. Defaults remain General and Codex for every role. Routing and Multimodal execute only through Auto; the General tool worker remains Codex and the streaming Omni model is unchanged.
+2. Independently select the task agent or Gemini for Polish, Auto routing, and Multimodal, with optional role-specific model IDs. Selecting Gemini sends that role's text/media to Google's API.
+3. Save and start a new conversation. Defaults remain General and the task agent for every role. Routing and Multimodal execute only through Auto; the General tool worker remains the task agent and the streaming Omni model is unchanged.
 
 A blank key field preserves the stored key. The configuration API returns only key availability. Keys entered through the browser are stored on your computer in `deploy/web/data/harness.json` with mode `0600`; never commit this file. To remove a stored key, empty `gemini.api_key` in that file and check the service environment variables. Settings are shared across users of this service.
 
@@ -179,6 +186,7 @@ After pulling new code, rebuild with `docker compose up -d --build`. Containers 
 | --- | --- |
 | `deploy/web/data/harness.json` | Saved task, provider and speaking-length settings, including any Gemini key. |
 | `deploy/web/data/codex/` | Codex login and session state. |
+| `deploy/web/data/claude/` | Claude Code login and session state. |
 | `deploy/web/data/<workspace>/` | Task files. Generated files remain after a session; browser download links are session-scoped. |
 
 ### Capacity measurement

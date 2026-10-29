@@ -1,11 +1,11 @@
-"""General has its own runtime budget and Codex configuration."""
+"""General has its own runtime budget and task-agent (Codex or Claude Code) configuration."""
 
 import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..config import validate_model_options
+from ..config import AGENTS, validate_model_options
 from .vision import VisionConfig
 
 
@@ -24,9 +24,17 @@ class GeneralAgentConfig:
     interrupt_timeout_s: float = 10
     result_ttl_s: float = 300
     queue_timeout_s: float = 300
+    agent: str = "codex"
 
     def __post_init__(self):
-        validate_model_options(self.model, self.effort, allow_inherit=True)
+        if self.agent not in AGENTS:
+            raise ValueError("General agent must be codex or claude")
+        validate_model_options(
+            self.model, self.effort, provider=self.agent, allow_inherit=True
+        )
+        # Claude Code's sandbox confines commands to writable roots; there is no read-only mode.
+        if self.agent == "claude" and self.sandbox != "workspace-write":
+            raise ValueError("The Claude Code agent supports workspace-write only")
         if (
             isinstance(self.command, str)
             or not self.command

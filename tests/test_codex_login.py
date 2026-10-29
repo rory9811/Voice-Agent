@@ -60,7 +60,7 @@ class CodexLoginTests(unittest.TestCase):
                     session.assert_not_called()
                 self.assertFalse(client.get('/api/status?fresh=true').json()['configured'])
                 public = client.get('/api/config').json()
-                self.assertEqual(public['codex_login']['state'], 'not_logged_in')
+                self.assertEqual(public['agent_login']['state'], 'not_logged_in')
                 self.assertNotIn('SECRET', json.dumps(public))
                 run.return_value.returncode = 0
                 self.assertTrue(client.get('/api/config').json()['configured'])
@@ -75,7 +75,7 @@ class CodexLoginTests(unittest.TestCase):
                 result = client.post('/api/config', json=public, headers={'X-Venus-Config-Token':public['token']})
                 self.assertEqual(result.status_code, 200)
                 self.assertFalse(result.json()['configured'])
-                self.assertEqual(result.json()['codex_login']['state'], 'not_logged_in')
+                self.assertEqual(result.json()['agent_login']['state'], 'not_logged_in')
 
     def test_changed_configuration_during_probe_does_not_admit_session(self):
         with tempfile.TemporaryDirectory() as tmp, patch('shutil.which', return_value='/bin/codex'):

@@ -1,9 +1,9 @@
-import { t, getLanguage, setLanguage } from "./i18n.js?v=20260921-model-modes";
+import { t, getLanguage, setLanguage, setAgent, AGENT_NAMES } from "./i18n.js?v=20261029-task-agent";
 import { Presence } from "./presence.js";
 import { AudioPlayer, encode } from "./audio.js?v=20261029-playback-buffer";
 import { MediaCapture } from "./capture.js";
-import { MicrophoneWaveform } from "./waveform.js?v=20260921-model-modes";
-import { TaskTray } from "./tasks.js?v=20260921-model-modes";
+import { MicrophoneWaveform } from "./waveform.js?v=20261029-task-agent";
+import { TaskTray } from "./tasks.js?v=20261029-task-agent";
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -707,8 +707,56 @@ function updateProviders() {
     $(`${role}-effort`).disabled = busy || gemini;
     $(`${role}-model`).placeholder = gemini ? $("gemini-model").value : "";
   }
-  $("multimodal-codex-audio-hint").hidden = $("multimodal-provider").value !== "codex";
+  $("multimodal-agent-audio-hint").hidden = $("multimodal-provider").value === "gemini";
 }
+const EFFORTS = {
+  codex: ["minimal", "low", "medium", "high", "xhigh"],
+  claude: ["low", "medium", "high", "xhigh", "max"],
+};
+const AGENT_COMMANDS = { codex: (binary) => [binary, "app-server"], claude: (binary) => [binary] };
+// The model, effort and executable fields edit the selected agent's own settings section.
+function storeAgentFields(agent) {
+  const section = state.configuration.data[agent];
+  section.model = $("backend-model").value.trim() || null;
+  section.effort = $("backend-effort").value || null;
+  section.command = AGENT_COMMANDS[agent]($("agent-binary").value.trim());
+}
+function loadAgentFields(agent) {
+  const section = state.configuration.data[agent];
+  $("backend-model").value = section.model || "";
+  $("backend-effort").value = section.effort || "";
+  $("agent-binary").value = section.command[0];
+}
+// Every role that used an agent follows the selected one; Gemini roles stay on Gemini.
+function updateAgent() {
+  const agent = $("task-agent").value;
+  setAgent(agent);
+  for (const id of ["backend-effort", "routing-effort", "response-effort", "multimodal-effort"]) {
+    const select = $(id);
+    for (const option of select.options)
+      option.hidden = option.disabled = option.value !== "" && !EFFORTS[agent].includes(option.value);
+    if (select.selectedOptions[0]?.disabled) select.value = "low";
+  }
+  for (const option of document.querySelectorAll(".agent-option")) {
+    option.value = agent;
+    option.textContent = AGENT_NAMES[agent];
+  }
+  renderAgentLogin();
+}
+$("task-agent").onchange = () => {
+  storeAgentFields(state.agent);
+  const agent = $("task-agent").value;
+  // Model names belong to one vendor: roles that follow the agent keep one name per agent.
+  for (const role of ["routing", "response", "multimodal"])
+    if ($(`${role}-provider`).value === state.agent) {
+      state.roleModels[`${state.agent}:${role}`] = $(`${role}-model`).value;
+      $(`${role}-model`).value = state.roleModels[`${agent}:${role}`] || "";
+    }
+  state.agent = agent;
+  loadAgentFields(state.agent);
+  updateAgent();
+  updateProviders();
+};
 $("routing-mode").onchange = () => { updateRoutingOptions(); updateProviders(); };
 for (const role of ["routing", "response", "multimodal"]) {
   $(`${role}-provider`).onchange = () => {
@@ -717,33 +765,38 @@ for (const role of ["routing", "response", "multimodal"]) {
   };
 }
 $("gemini-model").oninput = updateProviders;
-function renderCodexLogin() {
-  const status = state.configuration?.codex_login?.state || "error";
-  $("codex-login-status").textContent = t(`codexLogin_${status}`);
-  $("codex-login-help").hidden = status === "logged_in";
+// The server checks the saved agent; an unsaved switch has no login result yet.
+function renderAgentLogin() {
+  const agent = $("task-agent").value;
+  const status = agent !== state.configuration?.data?.agent
+    ? "unsaved"
+    : state.configuration?.agent_login?.state || "error";
+  $("agent-login-status").textContent = t(`agentLogin_${status}`);
+  $("agent-login-help").textContent = t(`agentLoginHelp_${agent}`);
+  $("agent-login-help").hidden = status === "logged_in";
 }
-$("recheck-codex").onclick = async () => {
-  const button = $("recheck-codex");
+$("recheck-login").onclick = async () => {
+  const button = $("recheck-login");
   button.disabled = true;
-  $("codex-login-status").textContent = t("codexChecking");
+  $("agent-login-status").textContent = t("agentChecking");
   try {
     const response = await fetch("/api/config", {cache: "no-store"});
     if (!response.ok) throw Error(t("settingsLoadFailed"));
     const result = await response.json();
-    state.configuration.codex_login = result.codex_login;
+    state.configuration.agent_login = result.agent_login;
     state.configured = result.configured;
-    renderCodexLogin();
-    showSettingsIssues(settingsIssues(result.codex_login?.state === "logged_in" ? [] : [result.codex_login.message]));
+    renderAgentLogin();
+    showSettingsIssues(settingsIssues(result.agent_login?.state === "logged_in" ? [] : [result.agent_login.message]));
     render();
   } catch {
-    $("codex-login-status").textContent = t("settingsLoadFailed");
+    $("agent-login-status").textContent = t("settingsLoadFailed");
   } finally { button.disabled = false; }
 };
 function settingsIssues(serverProblems = []) {
   const issues = [];
   const add = (id, key) => { if (!issues.some(x => x.id === id)) issues.push({id, message: t(key)}); };
   if (!$("backend-workspace").value.trim()) add("backend-workspace", "workspaceRequired");
-  if (!$("backend-binary").value.trim()) add("backend-binary", "codexRequired");
+  if (!$("agent-binary").value.trim()) add("agent-binary", "agentRequired");
   const usesGemini = $("response-provider").value === "gemini" || $("multimodal-provider").value === "gemini" || ($("routing-mode").value === "auto" && $("routing-provider").value === "gemini");
   if (usesGemini && !state.configuration?.gemini_key_configured && !$("gemini-key").value.trim()) add("gemini-key", "geminiRequired");
   for (const node of $("settings-form").querySelectorAll("input,select")) {
@@ -753,7 +806,7 @@ function settingsIssues(serverProblems = []) {
   }
   for (const message of serverProblems || []) {
     if (/Configure Task workspace/i.test(message)) add("backend-workspace", "workspaceRequired");
-    else if (/Codex executable/i.test(message)) add("backend-binary", "codexRequired");
+    else if (/executable not found/i.test(message)) add("agent-binary", "agentRequired");
     else if (/Gemini API key/i.test(message)) add("gemini-key", "geminiRequired");
     else issues.push({message: String(message).split(" / ")[getLanguage() === "zh" && String(message).includes(" / ") ? 1 : 0]});
   }
@@ -811,8 +864,11 @@ async function openSettings(required = false) {
     const response = await fetch("/api/config", { cache: "no-store" });
     if (!response.ok) throw Error(t("settingsLoadFailed"));
     state.configuration = await response.json();
-    renderCodexLogin();
     const data = state.configuration.data;
+    $("task-agent").value = state.agent = data.agent;
+    state.roleModels = {};
+    updateAgent();
+    loadAgentFields(data.agent);
     $("backend-workspace").value = data.workspace || "";
     $("gemini-model").value = data.gemini.model;
     $("gemini-key").value = "";
@@ -825,15 +881,12 @@ async function openSettings(required = false) {
     $("reply-language").value = data.language;
     $("proactive-progress").value = String(data.feedback.proactive_progress === true);
     $("length-penalty").value = data.duplex.length_penalty;
-    $("backend-model").value = data.codex.model || "";
-    $("backend-effort").value = data.codex.effort || "";
     $("routing-mode").value = data.routing.mode;
     $("routing-model").value = data.routing.model || "";
     $("routing-effort").value = data.routing.effort;
     $("routing-timeout").value = data.routing.timeout_s;
     $("response-model").value = data.responses.model || "";
     $("response-effort").value = data.responses.effort;
-    $("backend-binary").value = data.codex.command[0];
     void enumerateDevices();
     const busy = state.connected || state.connecting || state.stopping;
     for (const node of $("settings-form").querySelectorAll(
@@ -846,7 +899,7 @@ async function openSettings(required = false) {
     $("settings-message").textContent = busy ? t("settingsActive") : "";
     clearSettingsIssues();
     if (!$("settings-dialog").open) $("settings-dialog").showModal();
-    $("recheck-codex").disabled = busy;
+    $("recheck-login").disabled = busy;
     if (!busy && (required || !state.configured))
       showSettingsIssues(settingsIssues(state.configuration.check?.problems), true);
   } catch (error) {
@@ -862,20 +915,19 @@ $("settings-form").onsubmit = async (event) => {
   const button = $("save-settings");
   button.disabled = true;
   try {
+    storeAgentFields(state.agent);
     const data = structuredClone(state.configuration.data);
+    data.agent = state.agent;
     data.workspace = $("backend-workspace").value.trim();
     data.language = $("reply-language").value;
     data.feedback.proactive_progress = $("proactive-progress").value === "true";
     data.duplex.length_penalty = Number($("length-penalty").value);
-    data.codex.model = $("backend-model").value.trim() || null;
-    data.codex.effort = $("backend-effort").value || null;
+    // Routing fields are saved in General mode too: an agent switch rewrites them while hidden.
     data.routing.mode = $("routing-mode").value;
-    if (data.routing.mode === "auto") {
-      data.routing.provider = $("routing-provider").value;
-      data.routing.model = $("routing-model").value.trim() || null;
-      data.routing.effort = $("routing-effort").value;
-      data.routing.timeout_s = Number($("routing-timeout").value);
-    }
+    data.routing.provider = $("routing-provider").value;
+    data.routing.model = $("routing-model").value.trim() || null;
+    data.routing.effort = $("routing-effort").value;
+    data.routing.timeout_s = Number($("routing-timeout").value);
     data.responses.provider = $("response-provider").value;
     data.multimodal.provider = $("multimodal-provider").value;
     data.multimodal.model = $("multimodal-model").value.trim() || null;
@@ -884,7 +936,6 @@ $("settings-form").onsubmit = async (event) => {
     data.gemini.api_key = $("gemini-key").value.trim();
     data.responses.model = $("response-model").value.trim() || null;
     data.responses.effort = $("response-effort").value;
-    data.codex.command = [$("backend-binary").value.trim(), "app-server"];
     const response = await fetch("/api/config", {
       method: "POST",
       headers: {
@@ -906,7 +957,7 @@ $("settings-form").onsubmit = async (event) => {
     try {
       localStorage.setItem("venus-devices", JSON.stringify(devices));
     } catch {}
-    renderCodexLogin();
+    renderAgentLogin();
     if (!result.configured) {
       $("settings-message").textContent = t("settingsSavedLoginNeeded");
       showSettingsIssues(settingsIssues(result.check?.problems), false);
@@ -1022,6 +1073,7 @@ window.addEventListener("venus-theme", renderTheme);
 window.addEventListener("venus-language", () => {
   renderTheme();
   render();
+  if (state.configuration) renderAgentLogin();
   void enumerateDevices();
 });
 window.addEventListener("pagehide", () => {

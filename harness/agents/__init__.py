@@ -1,5 +1,6 @@
 """Full tool-using agents for the General execution branch."""
 
+from .claude import ClaudeAgentProvider
 from .codex import CodexAgentProvider
 from .config import GeneralAgentConfig
 from .contracts import (
@@ -18,6 +19,7 @@ __all__ = [
     "AgentInput",
     "AgentRequest",
     "AgentResult",
+    "ClaudeAgentProvider",
     "CodexAgentProvider",
     "GeneralAgentConfig",
     "GeneralAgentPort",
