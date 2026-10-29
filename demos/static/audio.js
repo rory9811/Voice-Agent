@@ -40,19 +40,17 @@ export class AudioPlayer {
     onText,
     onActivity,
     onError,
-    // Lead time before a fresh start; it hides a model step that runs slower
-    // than the previous one (measured p95 minus p50 step time ≈ 0.55 s).
-    bufferSeconds = 0.6,
-    maxWaitMs = 600,
+    // A fresh start plays this far in the future, so a later chunk may arrive
+    // up to this late without a gap. Simulated with measured step times
+    // (p50 365 ms, p95 906 ms): 1.0 s leaves a gap in ~4% of 10 s answers.
+    leadSeconds = 1.0,
     maxQueuedSeconds = 60,
   }) {
     if (
-      !Number.isFinite(bufferSeconds) ||
-      bufferSeconds < 0 ||
-      !Number.isFinite(maxWaitMs) ||
-      maxWaitMs < 0 ||
+      !Number.isFinite(leadSeconds) ||
+      leadSeconds < 0 ||
       !Number.isFinite(maxQueuedSeconds) ||
-      maxQueuedSeconds <= bufferSeconds
+      maxQueuedSeconds <= leadSeconds
     )
       throw Error("Invalid playback buffer settings");
     this.ack = ack;
@@ -67,12 +65,8 @@ export class AudioPlayer {
     this.muted = false;
     this.chain = Promise.resolve();
     this.level = 0;
-    this.bufferSeconds = bufferSeconds;
-    this.maxWaitMs = maxWaitMs;
+    this.leadSeconds = leadSeconds;
     this.maxQueuedSeconds = maxQueuedSeconds;
-    this.pending = [];
-    this.pendingSeconds = 0;
-    this.bufferTimer = null;
   }
   async prime() {
     if (!this.context) {
@@ -92,9 +86,6 @@ export class AudioPlayer {
   }
   clear() {
     this.epoch++;
-    this.cancelBufferTimer();
-    this.pending = [];
-    this.pendingSeconds = 0;
     for (const source of this.sources) {
       source.onended = null;
       try {
@@ -113,22 +104,6 @@ export class AudioPlayer {
     const epoch = this.epoch;
     this.chain = this.chain
       .then(() => this.play(message, epoch))
-      .catch((error) => {
-        if (epoch === this.epoch) this.onError(error);
-      });
-  }
-  finish(utteranceId) {
-    // End markers share the decode lane, including asynchronous WAV decoding.
-    // A short final answer must not wait for another chunk or another turn.
-    const epoch = this.epoch;
-    this.chain = this.chain
-      .then(() => {
-        if (
-          epoch === this.epoch &&
-          this.pending.some(({ message }) => message.utterance_id === utteranceId)
-        )
-          this.drain(true);
-      })
       .catch((error) => {
         if (epoch === this.epoch) this.onError(error);
       });
@@ -161,45 +136,14 @@ export class AudioPlayer {
       }
     } else throw Error("Unsupported audio format");
     if (epoch !== this.epoch) return;
-    const queued = Math.max(0, this.cursor - this.context.currentTime);
-    if (queued + this.pendingSeconds + buffer.duration > this.maxQueuedSeconds)
+    const now = this.context.currentTime;
+    if (Math.max(0, this.cursor - now) + buffer.duration > this.maxQueuedSeconds)
       throw Error("Playback buffer is full");
     if (message.text) this.onText(message.text, message.utterance_id);
-    this.pending.push({ message, buffer, epoch });
-    this.pendingSeconds += buffer.duration;
-    this.drain();
-  }
-  cancelBufferTimer() {
-    if (this.bufferTimer !== null) clearTimeout(this.bufferTimer);
-    this.bufferTimer = null;
-  }
-  drain(force = false) {
-    if (!this.pending.length) return;
-    const now = this.context.currentTime;
-    const continuous = this.cursor > now;
-    if (!continuous && !force && this.pendingSeconds < this.bufferSeconds) {
-      if (this.bufferTimer === null) {
-        const epoch = this.epoch;
-        this.bufferTimer = setTimeout(() => {
-          this.bufferTimer = null;
-          if (epoch !== this.epoch) return;
-          try {
-            this.drain(true);
-          } catch (error) {
-            this.onError(error);
-          }
-        }, this.maxWaitMs);
-      }
-      return;
-    }
-    this.cancelBufferTimer();
     // Only a fresh start needs lead time. All subsequent buffers share one
     // sample clock, independent of network arrival times and chunk lengths.
-    if (!continuous) this.cursor = now + 0.02;
-    const ready = this.pending;
-    this.pending = [];
-    this.pendingSeconds = 0;
-    for (const item of ready) this.schedule(item);
+    if (this.cursor <= now) this.cursor = now + this.leadSeconds;
+    this.schedule({ message, buffer, epoch });
     this.onActivity(this.audibleSources.size > 0);
   }
   schedule({ message, buffer, epoch }) {

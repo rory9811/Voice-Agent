@@ -218,13 +218,6 @@ class WebAgentSession:
             except (TimeoutError, asyncio.TimeoutError):
                 continue
             finished = processed.output.turn_finished
-            if finished:
-                # The audio sink has already enqueued this turn's final chunk.
-                # Let the client flush a short buffered tail without guessing
-                # whether a network pause means the model has finished.
-                await self.send(
-                    {"type": "playback_end", "utterance_id": processed.utterance_id}
-                )
             # Text attached to audio is emitted by BrowserPlayback, only after the gate.
             if (
                 processed.model_step.visible_text

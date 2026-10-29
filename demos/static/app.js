@@ -1,6 +1,6 @@
 import { t, getLanguage, setLanguage, setAgent, AGENT_NAMES } from "./i18n.js?v=20261029-task-agent";
 import { Presence } from "./presence.js";
-import { AudioPlayer, encode } from "./audio.js?v=20261029-playback-buffer";
+import { AudioPlayer, encode } from "./audio.js?v=20261029-playback-lead";
 import { MediaCapture } from "./capture.js";
 import { MicrophoneWaveform } from "./waveform.js?v=20261029-task-agent";
 import { TaskTray } from "./tasks.js?v=20261029-task-agent";
@@ -438,7 +438,6 @@ function connect(epoch) {
         return;
       }
       if (message.type === "playback") player.enqueue(message);
-      else if (message.type === "playback_end") player.finish(message.utterance_id);
       else if (message.type === "text")
         appendText(message.text, message.utterance_id);
       else if (message.type === "works") tasks.update(message.works);
