@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 
+from demos.model import wire
 from demos.model.client import RemoteOmniServingPort
 from demos.model.settings import TOKEN_ENV, model_token
 from demos.settings import load_setup
@@ -58,10 +59,10 @@ def check_model(server_url, token=None, timeout_s=30.0):
         raise RuntimeError(unreachable_message(server_url)) from exc
     if response.status_code != 200 or health.get("ready") is not True:
         raise RuntimeError(unreachable_message(server_url))
-    if "token_ok" not in health:
+    if health.get("protocol_version") != wire.PROTOCOL_VERSION:
         raise RuntimeError(
-            f"The model server at {server_url} runs an older version of this code; "
-            "update the code on the server and restart the model."
+            f"The model server at {server_url} runs a different version of this code; "
+            "update both sides to the same commit."
         )
     if health["token_ok"] is not True:
         raise RuntimeError(

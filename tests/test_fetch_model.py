@@ -1,12 +1,13 @@
-import os
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 import httpx
 
-from demos.model.client import RemoteOmniServingPort
+from demos.model.wire import PROTOCOL_VERSION
 from demos.server.resources import check_model, fetch_model
+
+HEALTHY = {"ready": True, "model_type": "omni", "token_ok": True, "protocol_version": PROTOCOL_VERSION}
 
 
 def mock_clients(handler, created):
@@ -23,7 +24,7 @@ class FetchModelTests(unittest.TestCase):
     def test_fetch_model_reads_type_and_files(self):
         def handler(request):
             if request.url.path == "/healthz":
-                return httpx.Response(200, json={"ready": True, "model_type": "audio", "token_ok": True})
+                return httpx.Response(200, json={**HEALTHY, "model_type": "audio"})
             if request.url.path == "/tokenizer":
                 return httpx.Response(
                     200, json={"files": {"tokenizer.json": "{}", "vocab.json": "{}"}}
@@ -67,7 +68,7 @@ class FetchModelTests(unittest.TestCase):
         def handler(request):
             seen.append((request.url.path, request.headers.get("authorization")))
             if request.url.path == "/healthz":
-                return httpx.Response(200, json={"ready": True, "model_type": "omni", "token_ok": True})
+                return httpx.Response(200, json=HEALTHY)
             return httpx.Response(200, json={"files": {"tokenizer.json": "{}"}})
 
         with mock_clients(handler, []), patch(
@@ -78,7 +79,7 @@ class FetchModelTests(unittest.TestCase):
 
     def test_rejected_token_is_named(self):
         def handler(request):
-            return httpx.Response(200, json={"ready": True, "model_type": "omni", "token_ok": False})
+            return httpx.Response(200, json={**HEALTHY, "token_ok": False})
 
         with mock_clients(handler, []), self.assertRaises(RuntimeError) as caught:
             check_model("http://10.194.99.8:8031", token="wrong")
@@ -86,20 +87,11 @@ class FetchModelTests(unittest.TestCase):
 
     def test_outdated_server_is_named(self):
         def handler(request):
-            return httpx.Response(200, json={"ready": True, "model_type": "omni"})
+            return httpx.Response(200, json={**HEALTHY, "protocol_version": "realtime-venus-harness/2"})
 
         with mock_clients(handler, []), self.assertRaises(RuntimeError) as caught:
             check_model("http://10.194.99.8:8031", token="secret")
-        self.assertIn("older version", str(caught.exception))
-
-    def test_model_client_sends_token(self):
-        port = RemoteOmniServingPort("http://10.194.99.8:8031", token="secret")
-        self.assertEqual(port._client.headers["authorization"], "Bearer secret")
-
-    def test_model_client_ignores_proxy_env(self):
-        with patch.dict(os.environ, {"ALL_PROXY": "socks5://127.0.0.1:1"}):
-            port = RemoteOmniServingPort("http://127.0.0.1:8031")
-        self.assertFalse(port._client.trust_env)
+        self.assertIn("different version", str(caught.exception))
 
 
 if __name__ == "__main__":

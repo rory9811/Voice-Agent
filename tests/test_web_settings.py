@@ -68,7 +68,7 @@ class WebResourcesTests(unittest.IsolatedAsyncioTestCase):
                     tokenizer=None, model_type='omni', model_timeout_s=42,
                 )
             self.assertEqual(resources.serving._length_penalty, 1.3)
-            self.assertEqual(resources.serving._client.timeout.read, 42)
+            self.assertEqual(resources.serving._timeout_s, 42)
             await resources.serving.aclose()
 
 

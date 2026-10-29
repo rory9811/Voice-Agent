@@ -461,7 +461,10 @@ class VenusOmniServingPort(Protocol):
     Talker chunks actually played, never generation or enqueue completion.
     ``next_event`` raises the built-in :class:`TimeoutError` when
     ``timeout_s`` elapses.  ``close_session`` must be callable while
-    ``next_event`` is blocked and must make that call raise.
+    ``next_event`` is blocked and must make that call raise.  Every other end
+    of the stream (a link lost past reconnecting, a model error, a close)
+    must raise an exception that is not a :class:`TimeoutError` subclass,
+    because the host treats a timeout as "no output yet".
     """
 
     async def open_session(self, request: OpenSession) -> SessionOpened: ...
