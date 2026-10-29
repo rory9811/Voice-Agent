@@ -1,4 +1,6 @@
+import asyncio
 import tempfile
+import threading
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
@@ -6,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from demos.model.adapter import PROTOCOL_TOKENS, RealtimeVenusOmniAdapter
 from demos.model.server import _ServerConfig, create_app
@@ -87,6 +89,12 @@ class SessionSocketTests(unittest.TestCase):
         self.assertEqual(opened["type"], "opened")
         return opened
 
+    def receive_error(self, ws, code):
+        error = receive(ws)
+        self.assertEqual((error["type"], error["code"]), ("error", code))
+        self.assertIs(type(error.get("ack")), int)
+        return error
+
     def assertClosed(self, ws, code):
         with self.assertRaises(WebSocketDisconnect) as caught:
             ws.receive_bytes()
@@ -134,16 +142,16 @@ class SessionSocketTests(unittest.TestCase):
         with self.client() as client:
             with self.connect(client) as ws:
                 ws.send_bytes(open_frame(model="Realtime-Venus-Audio"))
-                self.assertEqual(receive(ws)["code"], "model_mismatch")
+                self.receive_error(ws, "model_mismatch")
                 self.assertClosed(ws, 1011)
             with self.connect(client) as a:
                 self.open(a)
                 with self.connect(client) as b:
                     b.send_bytes(open_frame(session_id="B"))
-                    self.assertEqual(receive(b)["code"], "model_busy")
+                    self.receive_error(b, "model_busy")
             with self.connect(client) as ws:
                 ws.send_bytes(resume_frame({"session_id": "gone", "incarnation": 9}))
-                self.assertEqual(receive(ws)["code"], "session_lost")
+                self.receive_error(ws, "session_lost")
 
     def test_client_close_drains_then_ends_normally(self):
         with self.client() as client, self.connect(client) as ws:
@@ -157,9 +165,7 @@ class SessionSocketTests(unittest.TestCase):
             self.open(ws)
             self.adapter._official.set_session_stop.side_effect = RuntimeError("stop failed")
             ws.send_bytes(CLOSE)
-            error = receive(ws)
-            self.assertEqual((error["type"], error["code"]), ("error", "model_error"))
-            self.assertIn("stop failed", error["error"])
+            self.assertIn("stop failed", self.receive_error(ws, "model_error")["error"])
             self.assertClosed(ws, 1011)
 
     def test_protocol_error_ends_the_session(self):
@@ -167,15 +173,38 @@ class SessionSocketTests(unittest.TestCase):
             with self.connect(client) as ws:
                 self.open(ws)
                 ws.send_bytes(audio_frame(seq=1, event_seq=2))  # event_seq must start at 1
-                self.assertEqual(receive(ws)["code"], "protocol")
+                self.receive_error(ws, "protocol")
                 self.assertClosed(ws, 1011)
             with self.connect(client) as ws:
                 ws.send_bytes(b"\0")  # shorter than the length prefix
-                self.assertEqual(receive(ws)["code"], "protocol")
+                self.receive_error(ws, "protocol")
                 self.assertClosed(ws, 1011)
             with self.connect(client) as ws:
                 self.open(ws)  # the broken session gave up the model
 
+    def test_protocol_error_closes_the_session_when_the_peer_is_gone(self):
+        # bad_seq 1: the error frame is the first send that fails. bad_seq 2: an
+        # acknowledgement is being sent when the reader meets the bad frame.
+        for bad_seq in (1, 2):
+            with self.subTest(bad_seq=bad_seq), self.client() as client, self.connect(client) as ws:
+                self.open(ws)
+                sess = self.adapter._session
+
+                async def peer_gone(_ws, _data):
+                    while sess.inbox.last < bad_seq:  # the reader has not met the bad frame yet
+                        await asyncio.sleep(0.005)
+                    raise WebSocketDisconnect(1006)
+
+                detached = threading.Event()
+                real_detach = self.adapter.detach
+                self.adapter.detach = lambda s, link: (real_detach(s, link), detached.set())
+                with patch.object(WebSocket, "send_bytes", peer_gone):
+                    for seq in range(1, bad_seq):
+                        ws.send_bytes(audio_frame(seq=seq, event_seq=seq))
+                    ws.send_bytes(audio_frame(seq=bad_seq, event_seq=bad_seq + 1))
+                    self.assertTrue(detached.wait(5))
+                # Resuming it would confirm a frame that was never applied.
+                self.assertTrue(sess.closed)
 
 if __name__ == "__main__":
     unittest.main()

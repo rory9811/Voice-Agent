@@ -65,8 +65,8 @@ async def _build_adapter(config: _ServerConfig) -> RealtimeVenusOmniAdapter:
     )
 
 
-def _error(code: str, message: str) -> bytes:
-    return wire.encode_frame({"type": "error", "code": code, "error": message})
+def _error(code: str, message: str, ack: int) -> bytes:
+    return wire.encode_frame({"type": "error", "code": code, "error": message, "ack": ack})
 
 
 async def _receive(ws: WebSocket) -> tuple[dict[str, Any], bytes]:
@@ -107,7 +107,7 @@ async def _write(
         if link.is_set() and sess.link is not link:
             return 4001  # a resume moved the session to a newer connection
         if link.is_set() and sess.failure is not None:
-            await ws.send_bytes(_error("model_error", sess.failure))
+            await ws.send_bytes(_error("model_error", sess.failure, sess.inbox.last))
             return 1011
         frames = outbox.after(sent)
         if frames:
@@ -147,7 +147,7 @@ async def _serve_session(ws: WebSocket, adapter: RealtimeVenusOmniAdapter) -> No
         else:
             raise AdapterError(f"the first frame must be open or resume, got {header['type']!r}")
     except AdapterError as exc:
-        await ws.send_bytes(_error(exc.code, str(exc)))
+        await ws.send_bytes(_error(exc.code, str(exc), 0))  # no session is attached yet
         await ws.close(1011)
         return
     try:
@@ -156,13 +156,18 @@ async def _serve_session(ws: WebSocket, adapter: RealtimeVenusOmniAdapter) -> No
         reader = asyncio.create_task(_read(ws, adapter, sess))
         try:
             code = await _write(ws, sess, link, sent, reader)
+        except WebSocketDisconnect:
+            code = None  # the peer is gone; the reader may have met a bad frame first
         finally:
             reader.cancel()
         if code is not None:
             await ws.close(code)
-        elif (exc := reader.result()) is not None:
-            await ws.send_bytes(_error(exc.code, str(exc)))
-            await adapter.close_session(sess, "protocol_error")
+        elif reader.done() and (exc := reader.result()) is not None:
+            try:
+                await ws.send_bytes(_error(exc.code, str(exc), sess.inbox.last))
+            finally:
+                # Even if the peer is gone: a broken session must never be resumed.
+                await adapter.close_session(sess, "protocol_error")
             await ws.close(1011)
     finally:
         adapter.detach(sess, link)
