@@ -68,11 +68,12 @@ const capture = new MediaCapture($("preview-video"), {
   onBackpressure: backpressure,
 });
 let toastTimer;
-function notify(message, error = false) {
+function notify(message, error = false, sticky = false) {
   clearTimeout(toastTimer);
   $("toast").textContent = message;
   $("toast").classList.toggle("error", error);
   $("toast").hidden = false;
+  if (sticky) return;
   toastTimer = setTimeout(
     () => ($("toast").hidden = true),
     error ? 7000 : 4200,
@@ -417,6 +418,7 @@ function connect(epoch) {
           busy: "busy",
           configuration: "notConfigured",
           model_busy: "modelBusy",
+          model_link_lost: "modelLinkLost",
           model_mismatch: "modelMismatch",
           model_unreachable: "modelUnreachable",
         }[message.code];
@@ -442,6 +444,10 @@ function connect(epoch) {
         appendText(message.text, message.utterance_id);
       else if (message.type === "works") tasks.update(message.works);
       else if (message.type === "media_status" || message.type === "video_status") videoStatus(message);
+      else if (message.type === "model_link")
+        message.state === "down"
+          ? notify(t("modelReconnecting"), true, true)
+          : notify(t("modelReconnected"));
       else if (message.type === "command_error") notify(message.error, true);
     };
     socket.onerror = () => {

@@ -54,6 +54,7 @@ class WebAgentSession:
         self._video_idle_task = None
         self._upload_busy = False
         self._closing = False
+        self._link_up = True
         self.resources = None
         self.host = None
         self._send_lock = asyncio.Lock()
@@ -65,6 +66,10 @@ class WebAgentSession:
     async def send(self, message):
         async with self._send_lock:
             await self.websocket.send_json(message)
+
+    async def _link_changed(self, up):
+        self._link_up = up
+        await self.send({"type": "model_link", "state": "up" if up else "down"})
 
     async def run(self):
         await self.websocket.accept()
@@ -80,6 +85,7 @@ class WebAgentSession:
             if not self.resources.model.lower().startswith("realtime-venus-"):
                 raise ValueError("frontend model identifier must use the Venus series")
             self.started_at_ms = int(time.time() * 1000)
+            self.resources.serving.on_link_change = self._link_changed
             self.host = await VenusOmniServingHost.open(
                 agent=self.resources.agent,
                 serving=self.resources.serving,
@@ -242,6 +248,8 @@ class WebAgentSession:
         now = int(time.time() * 1000)
         if command in {"audio", "video_frame"} and self.input_source != "live":
             raise ValueError("视频模式请上传文件；实时采集需重新开始实时会话")
+        if command in {"audio", "video_frame"} and not self._link_up:
+            return
         if command == "audio":
             if message.get("format") != "pcm16" or message.get("sample_rate") != 16000:
                 raise ValueError("需要 16000Hz 单声道 PCM16")
