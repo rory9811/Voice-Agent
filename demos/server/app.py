@@ -124,6 +124,13 @@ def create_app(*, settings_path, model_type, tokenizer, model_server_url, model_
                 400, "Invalid settings / 配置无效，请检查输入"
             ) from None
 
+    @app.get("/api/agent-login")
+    async def agent_login(agent: str):
+        try:
+            return await asyncio.to_thread(configuration.agent_login, agent)
+        except (ValueError, TypeError, OSError, KeyError):
+            raise HTTPException(400, "Unknown task agent") from None
+
     @app.get("/api/status")
     async def status(fresh: bool = False):
         return {

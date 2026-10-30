@@ -134,11 +134,11 @@
     <dialog
       id="settings-dialog"
       class="dialog settings-dialog"
-      aria-label="Settings" data-label="settings"
+      aria-labelledby="settings-title"
     >
       <div class="dialog-heading">
         <div>
-          <h2 data-i18n="settings">Settings</h2>
+          <h2 id="settings-title" data-i18n="settings">Settings</h2>
         </div>
         <button
           class="icon-button dialog-close"
@@ -153,13 +153,22 @@
         <p id="settings-guidance-copy"></p>
         <ul id="settings-issues"></ul>
       </section>
-      <section id="agent-login-panel" class="settings-guidance">
-        <strong data-i18n="agentLoginTitle">Codex login on this computer</strong>
-        <p id="agent-login-status" role="status"></p>
-        <p id="agent-login-help" hidden></p>
-        <button id="recheck-login" type="button" class="secondary-button" data-i18n="agentRecheck">Recheck login</button>
-      </section>
       <form id="settings-form" novalidate>
+        <section id="agent-login-panel" class="agent-panel">
+          <label><span data-i18n="taskAgent">Task agent</span
+            ><select id="task-agent">
+              <option value="codex">Codex</option>
+              <option value="claude">Claude Code</option>
+            </select></label>
+          <p class="field-hint" data-i18n="backendHint">Background tasks use this computer’s existing Codex connection.</p>
+          <p id="agent-login-status" class="login-state" role="status"></p>
+          <div id="agent-login-steps" class="login-steps" hidden>
+            <p id="agent-login-help"></p>
+            <div class="login-command"><code id="agent-login-command"></code
+              ><button id="copy-login-command" type="button" class="secondary-button" data-i18n="copy">Copy</button></div>
+          </div>
+          <button id="recheck-login" type="button" class="secondary-button" data-i18n="agentRecheck">Recheck login</button>
+        </section>
         <label><span data-i18n="workspace">Task workspace</span>
           <input id="backend-workspace" required autocomplete="off" spellcheck="false" aria-describedby="workspace-hint" />
         </label>
@@ -200,16 +209,6 @@
             <span data-i18n="backendSettings">Task connection</span
             ><svg class="icon"><use href="#i-chevron" /></svg>
           </summary>
-          <label
-            ><span data-i18n="taskAgent">Task agent</span
-            ><select id="task-agent">
-              <option value="codex">Codex</option>
-              <option value="claude">Claude Code</option>
-            </select></label
-          >
-          <p class="field-hint" data-i18n="backendHint">
-            Background tasks use this computer’s existing Codex connection.
-          </p>
           <label
             ><span data-i18n="backendModel">Backend model</span
             ><input
@@ -317,10 +316,8 @@
             ><input id="agent-binary" required autocomplete="off"
           /></label>
         </details>
-        <p id="settings-message" class="field-hint" role="status"></p>
         <div class="dialog-footer">
-          <span class="connection"
-            ><span class="status-dot"></span>Realtime-Venus-Harness</span
+          <p id="settings-message" class="field-hint" role="status"></p
           ><button
             type="submit"
             class="secondary-button"

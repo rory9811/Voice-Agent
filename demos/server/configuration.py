@@ -39,6 +39,12 @@ class WebConfiguration:
             result["problems"].append(login["message"])
         return {"ok": not result["problems"], "problems": result["problems"], "agent_login": login}
 
+    def agent_login(self, agent):
+        """Login state of any agent, so the page can answer before it is saved."""
+        if agent not in self.logins:
+            raise ValueError("Unknown task agent")
+        return self.logins[agent].check(self.load().data[agent]["command"][0], force=True)
+
     def status(self, *, force_login=False):
         try:
             return self.path.exists() and self.check(self.load(), force_login=force_login)["ok"]

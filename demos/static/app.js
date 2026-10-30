@@ -24,6 +24,7 @@ const state = {
   checkingSettings: false,
   muted: false,
   outputMuted: false,
+  agentLogin: { agent: "", state: "" },
   transcript: new Map(),
   lastBackpressure: 0,
   online: true,
@@ -539,6 +540,10 @@ const EFFORTS = {
   codex: ["minimal", "low", "medium", "high", "xhigh"],
   claude: ["low", "medium", "high", "xhigh", "max"],
 };
+const LOGIN_COMMANDS = {
+  codex: "docker compose exec web codex login --device-auth",
+  claude: "docker compose exec -it web claude auth login",
+};
 const AGENT_COMMANDS = { codex: (binary) => [binary, "app-server"], claude: (binary) => [binary] };
 // The model, effort and executable fields edit the selected agent's own settings section.
 function storeAgentFields(agent) {
@@ -582,6 +587,8 @@ $("task-agent").onchange = () => {
   loadAgentFields(state.agent);
   updateAgent();
   updateProviders();
+  $("settings-message").textContent = "";
+  void checkAgentLogin();
 };
 $("routing-mode").onchange = () => { updateRoutingOptions(); updateProviders(); };
 for (const role of ["routing", "response", "multimodal"]) {
@@ -591,31 +598,52 @@ for (const role of ["routing", "response", "multimodal"]) {
   };
 }
 $("gemini-model").oninput = updateProviders;
-// The server checks the saved agent; an unsaved switch has no login result yet.
 function renderAgentLogin() {
   const agent = $("task-agent").value;
-  const status = agent !== state.configuration?.data?.agent
-    ? "unsaved"
-    : state.configuration?.agent_login?.state || "error";
-  $("agent-login-status").textContent = t(`agentLogin_${status}`);
+  const known = state.agentLogin.agent === agent;
+  const login = known ? state.agentLogin.state : "";
+  const unsaved = agent !== state.configuration?.data?.agent;
+  $("agent-login-status").textContent = !known
+    ? t("agentChecking")
+    : t(login === "logged_in" && unsaved ? "agentLogin_logged_in_unsaved" : `agentLogin_${login}`);
+  $("agent-login-status").dataset.state = login;
+  $("agent-login-steps").hidden = !["not_logged_in", "not_subscription"].includes(login);
   $("agent-login-help").textContent = t(`agentLoginHelp_${agent}`);
-  $("agent-login-help").hidden = status === "logged_in";
+  $("agent-login-command").textContent = LOGIN_COMMANDS[agent];
 }
+async function checkAgentLogin() {
+  const agent = $("task-agent").value;
+  state.agentLogin = { agent: "", state: "" };
+  renderAgentLogin();
+  let result = { state: "error" };
+  try {
+    const response = await fetch(`/api/agent-login?agent=${agent}`, { cache: "no-store" });
+    if (response.ok) result = await response.json();
+  } catch {}
+  // The user may have switched again while this was running.
+  if ($("task-agent").value !== agent) return;
+  state.agentLogin = { agent, state: result.state };
+  renderAgentLogin();
+}
+$("copy-login-command").onclick = async () => {
+  try {
+    await navigator.clipboard.writeText($("agent-login-command").textContent);
+    notify(t("copied"));
+  } catch {
+    notify(t("connectionFailed"), true);
+  }
+};
 $("recheck-login").onclick = async () => {
   const button = $("recheck-login");
   button.disabled = true;
-  $("agent-login-status").textContent = t("agentChecking");
   try {
-    const response = await fetch("/api/config", {cache: "no-store"});
-    if (!response.ok) throw Error(t("settingsLoadFailed"));
-    const result = await response.json();
-    state.configuration.agent_login = result.agent_login;
-    state.configured = result.configured;
-    renderAgentLogin();
-    showSettingsIssues(settingsIssues(result.agent_login?.state === "logged_in" ? [] : [result.agent_login.message]));
-    render();
-  } catch {
-    $("agent-login-status").textContent = t("settingsLoadFailed");
+    await checkAgentLogin();
+    if ($("task-agent").value !== state.configuration.data.agent) return;
+    const status = await refreshStatus(true);
+    if (status?.configured) {
+      clearSettingsIssues();
+      $("settings-message").textContent = t("settingsReady");
+    }
   } finally { button.disabled = false; }
 };
 function settingsIssues(serverProblems = []) {
@@ -630,7 +658,10 @@ function settingsIssues(serverProblems = []) {
     if (!node.checkValidity() && !issues.some(x => x.id === node.id))
       issues.push({id: node.id, message: `${node.closest("label")?.querySelector("span")?.textContent || node.id}: ${t("fieldRequired")}`});
   }
-  for (const message of serverProblems || []) {
+  // The panel at the top already says what to do about the login.
+  const login = state.configuration?.agent_login;
+  const shown = (serverProblems || []).filter((message) => message !== login?.message || login.state === "missing");
+  for (const message of shown) {
     if (/Configure Task workspace/i.test(message)) add("backend-workspace", "workspaceRequired");
     else if (/executable not found/i.test(message)) add("agent-binary", "agentRequired");
     else if (/Gemini API key/i.test(message)) add("gemini-key", "geminiRequired");
@@ -658,8 +689,9 @@ function clearSettingsIssues() {
 }
 function showSettingsIssues(issues, focusFirst = false) {
   clearSettingsIssues();
+  if (!issues.length) return;
   $("settings-guidance").hidden = false;
-  $("settings-guidance-copy").textContent = t(issues.length ? "setupInstructions" : "setupSaveNext");
+  $("settings-guidance-copy").textContent = t("setupInstructions");
   for (const issue of issues) {
     const li = document.createElement("li");
     const item = document.createElement(issue.id ? "button" : "span");
@@ -692,6 +724,7 @@ async function openSettings(required = false) {
     state.configuration = await response.json();
     const data = state.configuration.data;
     $("task-agent").value = state.agent = data.agent;
+    state.agentLogin = { agent: data.agent, state: state.configuration.agent_login.state };
     state.roleModels = {};
     updateAgent();
     loadAgentFields(data.agent);
@@ -777,10 +810,12 @@ $("settings-form").onsubmit = async (event) => {
     state.configuration = result;
     state.configured = result.configured;
     $("gemini-key").value = "";
+    state.agentLogin = { agent: result.data.agent, state: result.agent_login.state };
     renderAgentLogin();
     if (!result.configured) {
       $("settings-message").textContent = t("settingsSavedLoginNeeded");
       showSettingsIssues(settingsIssues(result.check?.problems), false);
+      $("settings-dialog").scrollTop = 0;
     } else {
       $("settings-dialog").close();
       notify(t("settingsSaved"));

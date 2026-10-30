@@ -180,12 +180,23 @@ body[data-phase="listening"] #status-phase { color: var(--live); }
 .settings-guidance { background: #f8f8f4; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; display: grid; gap: 4px; font-size: 13px; }
 .settings-guidance ul { padding-left: 18px; }
 .settings-guidance li button { border: 0; background: none; text-decoration: underline; text-align: left; font-size: 12px; color: var(--danger); }
+.agent-panel { background: #f8f8f4; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 8px; }
+.login-state { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+.login-state::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #999; flex: none; }
+.login-state[data-state="logged_in"]::before { background: var(--live); }
+.login-state[data-state="not_logged_in"]::before, .login-state[data-state="not_subscription"]::before { background: #d97706; }
+.login-state[data-state="missing"]::before, .login-state[data-state="timeout"]::before, .login-state[data-state="error"]::before { background: var(--danger); }
+.login-steps { display: grid; gap: 6px; font-size: 13px; }
+.login-command { display: flex; align-items: center; gap: 8px; }
+.login-command code { flex: 1; min-width: 0; overflow-wrap: anywhere; background: #2d2d2d; color: #fff; border-radius: 6px; padding: 6px 8px; font-size: 12px; }
 .setting-error { color: var(--danger); font-size: 12px; }
 [aria-invalid="true"] { border-color: var(--danger) !important; }
-.dialog-footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.dialog-footer { position: sticky; bottom: -16px; z-index: 1; display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 0 -20px -16px; padding: 10px 20px; background: var(--card); border-top: 1px solid var(--line); }
+.dialog-footer p { flex: 1; min-width: 0; }
 .secondary-button { border: 1px solid #d8d8d3; border-radius: 6px; background: var(--card); font-size: 13px; padding: 5px 12px; white-space: nowrap; color: var(--ink); }
 .secondary-button:hover:not(:disabled) { background: #f0f0eb; }
 .secondary-button:disabled { opacity: 0.5; }
+#settings-message:empty { visibility: hidden; }
 
 /* Toast */
 .toast { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); z-index: 10; width: max-content; max-width: min(560px, calc(100vw - 32px)); padding: 8px 14px; border-radius: 8px; background: var(--ink); color: #fff; font-size: 13px; }
