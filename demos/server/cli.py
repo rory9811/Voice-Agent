@@ -1,6 +1,7 @@
 """Serve the real model experience on a local HTTP endpoint."""
 
 import argparse
+import logging
 import sys
 
 import uvicorn
@@ -20,6 +21,9 @@ def main():
     args = parser.parse_args()
     if not 0 < args.model_timeout < float("inf"):
         parser.error("--model-timeout must be positive")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     try:
         model = fetch_model(args.model_server, model_token())
     except RuntimeError as exc:

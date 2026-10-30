@@ -302,7 +302,7 @@ def _parse_args(argv: list[str] | None = None) -> _ServerConfig:
     p.add_argument(
         "--system-prompt",
         default=None,
-        help="duplex system-prompt text (default: Streaming Omni Conversation.)",
+        help="duplex system-prompt text (default: REALTIME_VENUS_SYSTEM_PROMPT in demos/model/prompts.py)",
     )
     p.add_argument(
         "--system-prompt-file",
@@ -312,7 +312,7 @@ def _parse_args(argv: list[str] | None = None) -> _ServerConfig:
     p.add_argument(
         "--system-prompt-model-default",
         action="store_true",
-        help="use the model's built-in DEFAULT_SYSTEM_PROMPT (Chinese-only) instead of the streaming default",
+        help="use the checkpoint's built-in DEFAULT_SYSTEM_PROMPT (the bare 'Streaming Omni Conversation.' tag) instead",
     )
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)

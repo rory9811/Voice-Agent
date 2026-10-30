@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from demos.model.adapter import AdapterError, ModelMismatch, SessionBusy, SessionLost
+from demos.model.adapter import AdapterError, ModelMismatch, SessionBusy, SessionLost, _DecisionProbe
 from demos.model.wire import PROTOCOL_VERSION
 from test_model_server import omni_adapter
 
@@ -80,6 +80,39 @@ class DriverTests(unittest.IsolatedAsyncioTestCase):
         ack = next(i for i, h in enumerate(frames) if h["type"] == "input_accepted" and h["input_seq"] == 1)
         output = next(i for i, h in enumerate(frames) if h["type"] == "output" and h["input_seq_cutoff"] == 1)
         self.assertLess(ack, output)
+
+    async def test_each_step_logs_its_decision_and_backlog(self):
+        import math
+
+        import torch
+
+        total = self.adapter._official.total_ids = []
+        logits = torch.zeros(1, 12)
+        logits[0, 1] = math.log(99)  # 1 is "<|listen|>" in omni_adapter's ids: p = 99 / 110
+
+        def listen(**_):
+            if not total:  # the second step is not sampled, like a forced listen
+                self.adapter._official.decoder.decode(logits=logits, temperature=1.0)
+            total.extend([1, 5])
+            return {"is_listen": True, "end_of_turn": False}
+
+        self.adapter._model.streaming_generate.side_effect = listen
+        with self.assertLogs("demos.model.adapter", "INFO") as logs:
+            self.audio(seconds=2)
+            await until(lambda: len(self.sent("output")) == 2)
+        steps = [line for line in logs.output if "step session=A" in line]
+        self.assertIn(
+            "backlog_s=1.0 listen=True end=True delegate=False "
+            "p_listen=0.900 p_speak=0.009 p_delegate=0.009 decodes=1 ids=[1, 5]",
+            steps[0],
+        )
+        self.assertIn("backlog_s=0.0 listen=True end=True delegate=False decodes=0 ids=", steps[1])
+
+    async def test_preparing_again_does_not_stack_the_probe(self):
+        self.adapter._prepare_for_session()
+        probe = self.adapter._official.decoder.decode
+        self.assertIsInstance(probe, _DecisionProbe)
+        self.assertNotIsInstance(probe.inner, _DecisionProbe)
 
     async def test_output_window_bounds_unconsumed_steps(self):
         self.adapter._model.streaming_generate.return_value = SPEAK

@@ -126,6 +126,46 @@ def _official(model: Any) -> Any:
     return getattr(model, "official_duplex", model)
 
 
+class _DecisionProbe:
+    """Wraps the duplex decoder's ``decode`` to record what the model weighed.
+
+    Probabilities are softmax(logits / temperature) before the decoder's own
+    repetition penalty and top-k/top-p filtering. The first call of a step is
+    the listen-or-speak choice; ``<delegate>`` may come at any call.
+    """
+
+    def __init__(self, inner: Any, special: Mapping[str, int]) -> None:
+        self.inner = inner
+        self._ids = [special["<|listen|>"], special["<|speak|>"], special["<delegate>"]]
+        self.reset()
+
+    def reset(self) -> None:
+        self.first: tuple[float, float] | None = None
+        self.delegate = 0.0
+        self.calls = 0
+
+    def __call__(self, logits: Any, **kwargs: Any) -> Any:
+        import torch
+
+        # 0.7 mirrors the decoder's own default when no temperature is passed.
+        probs = torch.softmax(logits[0].float() / kwargs.get("temperature", 0.7), dim=-1)
+        listen, speak, delegate = probs[self._ids].tolist()
+        if self.first is None:
+            self.first = (listen, speak)
+        self.delegate = max(self.delegate, delegate)
+        self.calls += 1
+        return self.inner(logits=logits, **kwargs)
+
+    def summary(self) -> str:
+        if self.first is None:
+            return "decodes=0"  # no sampling decision: a forced or non-generating step
+        return "p_listen=%.3f p_speak=%.3f p_delegate=%.3f decodes=%d" % (
+            *self.first,
+            self.delegate,
+            self.calls,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Session state
 # ---------------------------------------------------------------------------
@@ -238,6 +278,7 @@ class RealtimeVenusOmniAdapter:
         self._length_penalty = None
         self._decoding_implementation = "not_prepared"
         self._generation_options: dict[str, Any] = {}
+        self._probe: _DecisionProbe | None = None
         self._session: _Session | None = None
         self._open_lock = asyncio.Lock()
         self._steps = StepStats()
@@ -395,12 +436,17 @@ class RealtimeVenusOmniAdapter:
             ref_audio=self._ref_audio,
             prompt_wav_path=self._prompt_wav_path,
         )
+        decoder = getattr(self._official, "decoder", None)
+        if isinstance(getattr(decoder, "decode", None), _DecisionProbe):
+            decoder.decode = decoder.decode.inner  # the penalty setup must see the real decoder
         try:
             options, implementation = configure_length_penalty(
                 self._official, length_penalty
             )
         except ValueError as exc:
             raise Unsupported(str(exc)) from exc
+        if decoder is not None:
+            self._probe = decoder.decode = _DecisionProbe(decoder.decode, self._special)
         self._generation_options = options
         self._length_penalty = length_penalty
         self._decoding_implementation = implementation
@@ -631,7 +677,9 @@ class RealtimeVenusOmniAdapter:
                     started = time.perf_counter()
                     frame = await self._step_once(sess)
                     if frame is not None:
-                        self._steps.add((time.perf_counter() - started) * 1000)
+                        step_ms = (time.perf_counter() - started) * 1000
+                        self._steps.add(step_ms)
+                        self._log_step(sess, frame[0], step_ms)
                         sess.outbox.push(*frame)
                         sess.emitted += 1
                         continue
@@ -739,6 +787,8 @@ class RealtimeVenusOmniAdapter:
         gen_fn = (self._official if is_backend else self._model).streaming_generate
         # delta tracking: snapshot total_ids length right before generate
         prev_len = sess.prev_total_len
+        if self._probe is not None:
+            self._probe.reset()
         result = await asyncio.to_thread(
             lambda: gen_fn(
                 prompt_wav_path=None,
@@ -749,23 +799,6 @@ class RealtimeVenusOmniAdapter:
         )
         ids = list(self._official.total_ids)
         delta = tuple(ids[prev_len:])
-        if any(
-            self._special[token] in delta for token in ("<delegate>", "</delegate>")
-        ):
-            _LOG.info(
-                "model emitted delegate control tokens session=%s generation=%s ids=%s",
-                sess.session_id,
-                gen_id,
-                delta,
-            )
-        if not result.get("is_listen"):
-            _LOG.info(
-                "model speak session=%s backend=%s end=%s ids=%s",
-                sess.session_id,
-                is_backend,
-                result.get("end_of_turn"),
-                delta,
-            )
         sess.prev_total_len = len(ids)
         wave = None if result.get("is_listen") else result.get("audio_waveform")
         pcm = sw.float32_to_pcm16le(wave)
@@ -796,6 +829,25 @@ class RealtimeVenusOmniAdapter:
             finish_reason=finish_reason,
         )
         return step, pcm, finished
+
+    def _log_step(self, sess: _Session, step: dict[str, Any], step_ms: float) -> None:
+        """One line per step: what the model decided and whether it keeps up with input."""
+        ids = step["total_token_ids"]
+        _LOG.info(
+            "step session=%s gen=%s seq=%d input=%d ms=%.0f backlog_s=%.1f "
+            "listen=%s end=%s delegate=%s %s ids=%s",
+            sess.session_id,
+            step["generation_id"],
+            step["step_seq"],
+            step["input_seq_cutoff"],
+            step_ms,
+            sess.audio_samples / self._chunk_samples,
+            self._special["<|listen|>"] in ids,
+            step["turn_finished"],
+            any(self._special[t] in ids for t in ("<delegate>", "</delegate>")),
+            self._probe.summary() if self._probe is not None else "decodes=0",
+            ids,
+        )
 
     def _collect_bucket(self, sess: _Session) -> Any | None:
         if sess.event_seq == 0:

@@ -122,6 +122,8 @@ function sendInput(pcm, jpeg) {
     format: "pcm16",
     sample_rate: 16000,
     data: encode(pcm),
+    // Lets the server log whether model audio was audible while this was captured.
+    playing: player.audibleSources.size > 0,
   });
 }
 function render() {

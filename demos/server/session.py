@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import math
 import secrets
 import tempfile
 import time
@@ -16,6 +17,7 @@ import anyio
 from demos.model.client import RemoteModelUnavailable
 from harness.bridge.host import AudioDisposition, VenusOmniServingHost
 from harness.core.models import AudioChunk, VideoFrame
+from harness.core.result_manager import audio_rms
 
 from .media import video_buckets, audio_buckets
 from .protocol import decode_media, playback_message
@@ -55,12 +57,18 @@ class WebAgentSession:
         self._upload_busy = False
         self._closing = False
         self._link_up = True
+        self._link_down_at = 0.0
+        self._dropped_audio_ms = 0
         self.resources = None
         self.host = None
         self._send_lock = asyncio.Lock()
         self._last_works = None
+        self._work_marks = {}
         self._audio_end = 0
         self._last_video_ms = 0
+        self._level_energy = 0.0  # sum of rms² × ms over the current second of input
+        self._level_ms = 0
+        self._level_playing = False
         self.started_at_ms = int(time.time() * 1000)
 
     async def send(self, message):
@@ -68,6 +76,16 @@ class WebAgentSession:
             await self.websocket.send_json(message)
 
     async def _link_changed(self, up):
+        if not up:
+            self._link_down_at = time.monotonic()
+            self._dropped_audio_ms = 0
+        elif not self._link_up:
+            logger.info(
+                "model link outage session=%s down_s=%.1f dropped_audio_ms=%d",
+                self.session_id,
+                time.monotonic() - self._link_down_at,
+                self._dropped_audio_ms,
+            )
         self._link_up = up
         await self.send({"type": "model_link", "state": "up" if up else "down"})
 
@@ -206,12 +224,35 @@ class WebAgentSession:
         while True:
             snapshot = self.work_snapshot()
             if snapshot != self._last_works:
+                self._log_work_changes(snapshot)
                 await self.send({"type": "works", "works": snapshot})
                 self._last_works = snapshot
             await asyncio.sleep(0.25)
 
+    def _log_work_changes(self, snapshot):
+        """One line per task change; the objective and results stay out of the log."""
+        for work in snapshot:
+            feedback = work["feedback"][-1] if work["feedback"] else {}
+            mark = (work["state"], work["phase"], work["delivery_status"], feedback.get("at"))
+            if self._work_marks.get(work["work_id"]) == mark:
+                continue
+            self._work_marks[work["work_id"]] = mark
+            logger.info(
+                "work session=%s id=%s capability=%s state=%s phase=%s delivery=%s "
+                "last_feedback=%s age_s=%.1f",
+                self.session_id,
+                work["work_id"],
+                work["capability"],
+                work["state"],
+                work["phase"],
+                work["delivery_status"],
+                feedback.get("kind", "-"),
+                time.time() - (work["created_at"] or time.time()),
+            )
+
     async def output(self):
         finished = True
+        queued = suppressed = chars = 0
         while True:
             if finished and await self.host.begin_backend_turn():
                 finished = False
@@ -220,6 +261,21 @@ class WebAgentSession:
             except (TimeoutError, asyncio.TimeoutError):
                 continue
             finished = processed.output.turn_finished
+            queued += processed.audio_disposition is AudioDisposition.QUEUED
+            suppressed += processed.audio_disposition is AudioDisposition.SUPPRESSED
+            chars += len(processed.model_step.visible_text)
+            if finished:
+                if queued or suppressed or chars:  # one-second listen units say nothing
+                    logger.info(
+                        "turn session=%s gen=%s work=%s queued=%d suppressed=%d chars=%d",
+                        self.session_id,
+                        processed.output.generation_id,
+                        processed.caused_by_work_id or "-",
+                        queued,
+                        suppressed,
+                        chars,
+                    )
+                queued = suppressed = chars = 0
             # Text attached to audio is emitted by BrowserPlayback, only after the gate.
             if (
                 processed.model_step.visible_text
@@ -253,6 +309,8 @@ class WebAgentSession:
         if command in {"audio", "video_frame"} and self.input_source != "live":
             raise ValueError("视频模式请上传文件；实时采集需重新开始实时会话")
         if command in {"audio", "video_frame"} and not self._link_up:
+            if command == "audio":
+                self._dropped_audio_ms += len(decode_media(message, kind="audio")) // 32
             return
         if command == "audio":
             if message.get("format") != "pcm16" or message.get("sample_rate") != 16000:
@@ -260,10 +318,10 @@ class WebAgentSession:
             data = decode_media(message, kind="audio")
             duration = max(1, round(len(data) / 32))
             start = max(self._audio_end, now - duration)
-            await self.host.append_audio(
-                AudioChunk(data=data, start_ms=start, end_ms=start + duration)
-            )
+            chunk = AudioChunk(data=data, start_ms=start, end_ms=start + duration)
+            await self.host.append_audio(chunk)
             self._audio_end = start + duration
+            self._log_level(chunk, message.get("playing") is True)
         elif command == "video_frame":
             if self.mode != "omni":
                 raise ValueError("纯语音模式不接收画面")
@@ -293,6 +351,24 @@ class WebAgentSession:
             await self.send({"type": "pong"})
         else:
             raise ValueError("未知 Web 命令")
+
+    def _log_level(self, chunk, playing):
+        """One line per second of live input: its loudness, and whether model audio was audible."""
+        rms = audio_rms(chunk) or 0.0
+        self._level_energy += rms * rms * (chunk.end_ms - chunk.start_ms)
+        self._level_ms += chunk.end_ms - chunk.start_ms
+        self._level_playing |= playing
+        if self._level_ms < 1000:
+            return
+        level = math.sqrt(self._level_energy / self._level_ms)
+        logger.info(
+            "input session=%s t_s=%d rms_dbfs=%.1f playing=%s",
+            self.session_id,
+            (self._audio_end - self.started_at_ms) // 1000,
+            20 * math.log10(max(level, 1.0) / 32768),
+            self._level_playing,
+        )
+        self._level_energy, self._level_ms, self._level_playing = 0.0, 0, False
 
     async def upload_video(self, stream):
         if self.input_source != "video" or self.mode != "omni":
