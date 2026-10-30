@@ -151,7 +151,7 @@ python frontend/Realtime-Venus-Audio/audio_duplex_chat.py \
 cp .env.example .env
 ```
 
-在 `.env` 中设置 `MODEL_TYPE`（`omni`：摄像头加麦克风、视频上传；`audio`：麦克风、音频上传）、`MODEL_DIR`（下载根目录，包含 `config.yaml` 和权重目录）和 `VENUS_MODEL_TOKEN`（共享密钥，用 `python3 -c "import secrets; print(secrets.token_urlsafe(24))"` 生成一次）。然后启动，第一次会构建镜像：
+在 `.env` 中设置 `MODEL_TYPE`（`omni`：视频全双工，摄像头加麦克风；`audio`：音频双工，麦克风）、`MODEL_DIR`（下载根目录，包含 `config.yaml` 和权重目录）和 `VENUS_MODEL_TOKEN`（共享密钥，用 `python3 -c "import secrets; print(secrets.token_urlsafe(24))"` 生成一次）。然后启动，第一次会构建镜像：
 
 ```bash
 docker compose up -d

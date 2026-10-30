@@ -1,19 +1,13 @@
-import asyncio
 import json
 import tempfile
 import unittest
-import wave
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
-import av
-import numpy as np
 from fastapi.testclient import TestClient
 from demos.model.adapter import _load_real_blocking
 from demos.server.app import create_app
-from demos.server.media import audio_buckets
-from demos.server.session import WebAgentSession
 
 
 def checkpoint(path, kind):
@@ -41,69 +35,40 @@ class ModelModeTests(unittest.TestCase):
             else:
                 base.use_memory.assert_called_once_with(memory_minutes=40)
 
-    def test_web_status_and_invalid_modes_are_enforced_server_side(self):
+    def client(self, tmp, model_type):
+        app=create_app(settings_path=Path(tmp)/'settings.json',model_type=model_type,tokenizer=None,model_server_url='http://unused')
+        return TestClient(app, base_url="http://localhost")
+
+    def test_status_lists_only_the_deployed_mode(self):
         with tempfile.TemporaryDirectory() as tmp:
-            for mode,wrong in [('audio','omni'),('omni','audio')]:
-                app=create_app(settings_path=Path(tmp)/'settings.json',model_type=mode,tokenizer=None,model_server_url='http://unused')
-                with TestClient(app, base_url="http://localhost") as client:
+            for model_type,mode in [('audio','audio'),('omni','camera')]:
+                with self.client(tmp,model_type) as client:
                     result=client.get('/api/status').json()
-                    self.assertEqual(result['model_type'],mode)
-                    self.assertEqual(result['model'],'Realtime-Venus-'+mode.capitalize())
-                    self.assertEqual(result['input_modes'],['audio','audio_file'] if mode=='audio' else ['camera','video'])
+                    self.assertEqual(result['input_modes'],[mode])
+                    self.assertEqual(result['model'],'Realtime-Venus-'+model_type.capitalize())
+                    self.assertNotIn('model_type',result)
+                    self.assertNotIn('upload_limit_mb',result)
+
+    def test_socket_rejects_a_mode_not_deployed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for model_type,wrong in [('audio','camera'),('omni','audio')]:
+                with self.client(tmp,model_type) as client:
                     with client.websocket_connect('ws://localhost/ws?mode='+wrong) as socket:
                         self.assertEqual(socket.receive_json()['code'],'input_mode')
-                    with client.websocket_connect('ws://localhost/ws?mode='+mode+'&source='+('video' if mode=='audio' else 'audio_file')) as socket:
-                        self.assertEqual(socket.receive_json()['code'],'input_mode')
 
-
-class AudioDecodeTests(unittest.TestCase):
-    def test_stereo_resampling_padding_and_no_frames(self):
+    def test_socket_accepts_the_deployed_mode(self):
         with tempfile.TemporaryDirectory() as tmp:
-            p=Path(tmp)/'speech.wav'
-            samples=np.full((22050*3//2,2),1200,dtype='<i2')
-            with wave.open(str(p),'wb') as w:
-                w.setnchannels(2);w.setsampwidth(2);w.setframerate(22050);w.writeframes(samples.tobytes())
-            buckets=list(audio_buckets(p))
-            self.assertEqual(len(buckets),2)
-            self.assertTrue(all(len(b.pcm)==32000 and not b.jpeg for b in buckets))
-            self.assertTrue(any(buckets[0].pcm))
-            self.assertEqual(buckets[-1].pcm[-8000:],b'\0'*8000)
+            for model_type,mode in [('audio','audio'),('omni','camera')]:
+                with self.client(tmp,model_type) as client:
+                    with client.websocket_connect('ws://localhost/ws?mode='+mode) as socket:
+                        self.assertEqual(socket.receive_json()['code'],'configuration')
 
-    def test_corrupt_media_and_video_only_are_rejected(self):
+    def test_upload_routes_are_gone(self):
         with tempfile.TemporaryDirectory() as tmp:
-            p=Path(tmp)/'bad.wav';p.write_bytes(b'not audio')
-            with self.assertRaises(Exception):list(audio_buckets(p))
-            p=Path(tmp)/'video.mp4'
-            with av.open(str(p),'w') as out:
-                stream=out.add_stream('mpeg4',rate=1);stream.width=16;stream.height=16;stream.pix_fmt='yuv420p'
-                frame=av.VideoFrame.from_ndarray(np.zeros((16,16,3),dtype=np.uint8),format='rgb24')
-                for packet in stream.encode(frame):out.mux(packet)
-                for packet in stream.encode():out.mux(packet)
-            with self.assertRaisesRegex(ValueError,'音频轨道'):list(audio_buckets(p))
+            app=self.client(tmp,'omni').app
+            paths={route.path for route in app.routes}
+            self.assertNotIn('/api/sessions/{sid}/video',paths)
+            self.assertNotIn('/api/sessions/{sid}/audio',paths)
 
-
-class UploadModeTests(unittest.IsolatedAsyncioTestCase):
-    async def test_audio_upload_feeds_pcm_and_never_video_frames(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path=Path(tmp)/'audio.wav'
-            with wave.open(str(path),'wb') as w:
-                w.setnchannels(1);w.setsampwidth(2);w.setframerate(16000);w.writeframes(b'\1\0'*8000)
-            session=WebAgentSession(MagicMock(),MagicMock(),mode='audio',input_source='audio_file')
-            session.host=SimpleNamespace(append_audio=AsyncMock(),append_video_frame=AsyncMock())
-            session.send=AsyncMock();session._video_idle=AsyncMock()
-            temporary=MagicMock()
-            with patch('demos.server.session.VIDEO_TAIL_SECONDS',0),patch('demos.server.session.asyncio.sleep',new=AsyncMock()):
-                await session._feed_video(path,temporary)
-                await session._video_idle_task
-            session.host.append_audio.assert_awaited_once()
-            session.host.append_video_frame.assert_not_called()
-            self.assertIn({'type':'media_status','state':'complete','seconds':1},[call.args[0] for call in session.send.call_args_list])
-            temporary.cleanup.assert_called_once()
-
-    async def test_wrong_upload_endpoint_is_rejected(self):
-        audio=WebAgentSession(MagicMock(),MagicMock(),mode='audio',input_source='audio_file')
-        video=WebAgentSession(MagicMock(),MagicMock(),mode='omni',input_source='video')
-        with self.assertRaises(ValueError):await audio.upload_video(None)
-        with self.assertRaises(ValueError):await video.upload_audio(None)
 
 if __name__=='__main__':unittest.main()

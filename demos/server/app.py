@@ -1,4 +1,4 @@
-"""The Realtime-Venus experience: one live session, uploads, settings and task results."""
+"""The Realtime-Venus experience: one live duplex session, settings and task results."""
 
 import asyncio
 import json
@@ -29,6 +29,7 @@ from demos.variants import model_name
 
 def create_app(*, settings_path, model_type, tokenizer, model_server_url, model_timeout_s=180.0):
     frontend_model = model_name(model_type)
+    input_modes = ["audio"] if model_type == "audio" else ["camera"]
     configuration = WebConfiguration(settings_path)
     static = Path(__file__).resolve().parents[1] / "static"
     sessions = {}
@@ -118,11 +119,9 @@ def create_app(*, settings_path, model_type, tokenizer, model_server_url, model_
     async def status(fresh: bool = False):
         return {
             "model": frontend_model,
-            "model_type": model_type,
-            "input_modes": ["audio", "audio_file"] if model_type == "audio" else ["camera", "video"],
+            "input_modes": input_modes,
             "configured": await asyncio.to_thread(configuration.status, force_login=fresh),
             "busy": bool(sessions),
-            "upload_limit_mb": 200,
         }
 
     @app.websocket("/ws")
@@ -134,12 +133,10 @@ def create_app(*, settings_path, model_type, tokenizer, model_server_url, model_
         if origin and urlsplit(origin).netloc != websocket.headers.get("host"):
             await websocket.close(code=1008)
             return
-        mode = websocket.query_params.get("mode", model_type)
-        source = websocket.query_params.get("source", "live")
-        valid_source = {"live", "audio_file"} if model_type == "audio" else {"live", "video"}
-        if mode != model_type or source not in valid_source:
+        mode = websocket.query_params.get("mode", input_modes[0])
+        if mode not in input_modes:
             await websocket.accept()
-            await websocket.send_json({"type": "fatal_error", "code": "input_mode", "error": "Input source does not match the deployed model"})
+            await websocket.send_json({"type": "fatal_error", "code": "input_mode", "error": "This mode is not available on the deployed model"})
             await websocket.close(code=1008)
             return
         revision = configuration.revision()
@@ -168,7 +165,6 @@ def create_app(*, settings_path, model_type, tokenizer, model_server_url, model_
                 model_timeout_s=model_timeout_s,
             ),
             mode=mode,
-            input_source=source,
             settings_path=str(configuration.path),
         )
         sessions[session.session_id] = session
@@ -176,24 +172,6 @@ def create_app(*, settings_path, model_type, tokenizer, model_server_url, model_
             await session.run()
         finally:
             sessions.pop(session.session_id, None)
-
-    @app.post("/api/sessions/{sid}/video", status_code=202)
-    async def upload_video(sid: str, request: Request):
-        session = authorized_session(sid, request)
-        try:
-            await session.upload_video(request.stream())
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from None
-        return {"accepted": True}
-
-    @app.post("/api/sessions/{sid}/audio", status_code=202)
-    async def upload_audio(sid: str, request: Request):
-        session = authorized_session(sid, request)
-        try:
-            await session.upload_audio(request.stream())
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from None
-        return {"accepted": True}
 
     @app.get("/api/sessions/{sid}/works/{work_id}/artifacts/{index}")
     async def download_artifact(sid: str, work_id: str, index: int, request: Request):

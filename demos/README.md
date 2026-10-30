@@ -2,7 +2,7 @@
 
 **English** · [简体中文](README_ZH.md) · [Project overview](../README.md) · [Harness](../harness/README.md)
 
-Browser demo with Realtime-Venus-Omni or Realtime-Venus-Audio and a Codex-backed Harness. Choose Audio for microphone/audio upload, or Omni for camera with microphone/video upload.
+Browser demo with Realtime-Venus-Omni or Realtime-Venus-Audio and a Codex-backed Harness. Deploy Omni for video full-duplex (camera and microphone), or Audio for audio duplex (microphone).
 
 ## Two loops, one conversation
 
@@ -14,7 +14,7 @@ The selected frontend handles streaming media and speech in the **interaction lo
 
 | Component | Responsibility | Implementation |
 | --- | --- | --- |
-| Browser | Capture devices or upload audio/video, stream input, play speech, show task progress and downloads. | [`static/app.js`](static/app.js) |
+| Browser | Capture devices, stream input, play speech, show task progress and downloads. | [`static/app.js`](static/app.js) |
 | Web service · 8032 | Accept HTTP/WebSocket requests, own the browser session, and assemble model and Harness connections. | [`server/app.py`](server/app.py), [`server/resources.py`](server/resources.py) |
 | Session host | Order media input, consume model output, schedule private feedback, and relay playback acknowledgments. | [`server/session.py`](server/session.py), [`VenusOmniServingHost`](../harness/bridge/host.py) |
 | Model service · 8031 | Load the checkpoint, retain model state, run streaming inference, and generate native speech. | [`model/server.py`](model/server.py), [`model/adapter.py`](model/adapter.py) |
@@ -88,12 +88,10 @@ Open **[http://localhost:8032](http://localhost:8032)** and start a conversation
 
 | Input mode | What to do |
 | --- | --- |
-| **Audio · microphone** | Allow microphone access and listen through your local speakers. |
-| **Audio · audio upload** | Upload WAV, MP3, M4A, FLAC, OGG or other audio, up to **200 MB**. |
-| **Omni · camera** | Share the camera and microphone together; the page shows a live preview. |
-| **Omni · video upload** | Choose Video and upload a local file, up to **200 MB**. Its soundtrack and sampled frames are streamed to the model. |
+| **Video Full-Duplex** (Omni) | Share the camera and microphone together; the page shows a live preview. |
+| **Audio Duplex** (Audio) | Allow microphone access and listen through your local speakers. |
 
-The side panel provides task progress, cancellation, and artifact downloads.
+The task panel provides task progress, cancellation, and artifact downloads.
 
 The model serves **one active conversation**. After the web service disconnects, the model keeps that conversation for 60 seconds so it can reconnect; if a restarted web service opens a new conversation in that time, the old one yields immediately. The page is published on `127.0.0.1` only, which browsers trust for camera and microphone.
 
@@ -107,7 +105,7 @@ The model serves **one active conversation**. After the web service disconnects,
 
 | Field | Default | Purpose |
 | --- | --- | --- |
-| `MODEL_TYPE` | `omni` | `omni`: camera with microphone and video upload; `audio`: microphone and audio upload. |
+| `MODEL_TYPE` | `omni` | `omni`: video full-duplex (camera and microphone); `audio`: audio duplex (microphone). |
 | `MODEL_DIR` | — (required) | Download root holding `config.yaml` and the checkpoint folders; the server picks the folder for `MODEL_TYPE`. Relative paths start with `./` or `../` and are relative to `deploy/model` (without the prefix, Compose creates an empty named volume). Mounted read-only. |
 | `REFERENCE_AUDIO` | `assets/HT_ref_audio.wav` | Reference voice, relative to the selected checkpoint folder. |
 | `MODEL_PORT` | `8031` | Port your computer uses to reach the model. |

@@ -11,7 +11,7 @@ from harness.bridge.host import AudioDisposition
 
 def make_session():
     websocket = MagicMock(accept=AsyncMock(), send_json=AsyncMock(), close=AsyncMock())
-    return WebAgentSession(websocket, AsyncMock(), mode="omni"), websocket
+    return WebAgentSession(websocket, AsyncMock(), mode="camera"), websocket
 
 
 class WebLinkTests(unittest.IsolatedAsyncioTestCase):

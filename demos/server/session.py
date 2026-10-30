@@ -4,7 +4,6 @@ import asyncio
 import logging
 import math
 import secrets
-import tempfile
 import time
 import uuid
 from contextlib import suppress
@@ -19,12 +18,9 @@ from harness.bridge.host import AudioDisposition, VenusOmniServingHost
 from harness.core.models import AudioChunk, VideoFrame
 from harness.core.result_manager import audio_rms
 
-from .media import video_buckets, audio_buckets
 from .protocol import decode_media, playback_message
 
 logger = logging.getLogger(__name__)
-MAX_UPLOAD_BYTES = 200 * 1024 * 1024
-VIDEO_TAIL_SECONDS = 8
 
 
 class BrowserPlayback:
@@ -41,21 +37,15 @@ class WebAgentSession:
         websocket,
         factory,
         *,
-        mode="omni",
+        mode="camera",
         settings_path=None,
-        input_source="live",
     ):
         self.websocket = websocket
         self.factory = factory
         self.mode = mode
         self.settings_path = settings_path
-        self.input_source = input_source
         self.session_id = f"web-{uuid.uuid4().hex}"
         self.upload_token = secrets.token_urlsafe(32)
-        self._video_task = None
-        self._video_idle_task = None
-        self._upload_busy = False
-        self._closing = False
         self._link_up = True
         self._link_down_at = 0.0
         self._dropped_audio_ms = 0
@@ -93,10 +83,8 @@ class WebAgentSession:
         await self.websocket.accept()
         tasks = []
         try:
-            if self.mode not in {"omni", "audio"}:
+            if self.mode not in {"camera", "audio"}:
                 raise ValueError("unsupported input mode")
-            if self.input_source not in ({"live", "audio_file"} if self.mode == "audio" else {"live", "video"}):
-                raise ValueError("unsupported media source")
             self.resources = await self.factory(
                 mode=self.mode, settings_path=self.settings_path
             )
@@ -137,12 +125,7 @@ class WebAgentSession:
                 with suppress(Exception):
                     await self.send(failure)
         finally:
-            self._closing = True
             with anyio.CancelScope(shield=True):
-                if self._video_task:
-                    tasks.append(self._video_task)
-                if self._video_idle_task:
-                    tasks.append(self._video_idle_task)
                 for task in tasks:
                     task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
@@ -162,7 +145,6 @@ class WebAgentSession:
             "session_id": self.session_id,
             "session_started_at_ms": self.started_at_ms,
             "upload_token": self.upload_token,
-            "input_source": self.input_source,
             "delegate_audio_filtered": self.host.opened.capabilities.delegate_audio_filtered,
             "delegate_audio_policy": "mute_until_turn_end",
         }
@@ -306,8 +288,6 @@ class WebAgentSession:
 
     async def handle(self, command, message):
         now = int(time.time() * 1000)
-        if command in {"audio", "video_frame"} and self.input_source != "live":
-            raise ValueError("视频模式请上传文件；实时采集需重新开始实时会话")
         if command in {"audio", "video_frame"} and not self._link_up:
             if command == "audio":
                 self._dropped_audio_ms += len(decode_media(message, kind="audio")) // 32
@@ -323,8 +303,8 @@ class WebAgentSession:
             self._audio_end = start + duration
             self._log_level(chunk, message.get("playing") is True)
         elif command == "video_frame":
-            if self.mode != "omni":
-                raise ValueError("纯语音模式不接收画面")
+            if self.mode != "camera":
+                raise ValueError("音频双工不接收画面")
             await self.host.append_video_frame(
                 VideoFrame(
                     data=decode_media(message, kind="video_frame"), captured_at_ms=now
@@ -369,123 +349,3 @@ class WebAgentSession:
             self._level_playing,
         )
         self._level_energy, self._level_ms, self._level_playing = 0.0, 0, False
-
-    async def upload_video(self, stream):
-        if self.input_source != "video" or self.mode != "omni":
-            raise ValueError("请先开始视频会话")
-        await self._upload_media(stream)
-
-    async def upload_audio(self, stream):
-        if self.input_source != "audio_file" or self.mode != "audio":
-            raise ValueError("请先开始音频文件会话")
-        await self._upload_media(stream)
-
-    async def _upload_media(self, stream):
-        if self._closing or not self.host or self.input_source == "live":
-            raise ValueError("请先开始文件会话")
-        if self._upload_busy:
-            raise ValueError("请等待当前文件处理完成")
-        self._upload_busy = True
-        temp = tempfile.TemporaryDirectory(prefix="venus-upload-")
-        path = Path(temp.name) / "input.media"
-        transferred = False
-        try:
-            if self._video_idle_task:
-                self._video_idle_task.cancel()
-                await asyncio.gather(self._video_idle_task, return_exceptions=True)
-                self._video_idle_task = None
-            size = 0
-            with path.open("wb") as output:
-                async for chunk in stream:
-                    if self._closing:
-                        raise ValueError("会话已结束")
-                    size += len(chunk)
-                    if size > MAX_UPLOAD_BYTES:
-                        raise ValueError("文件大小不能超过 200 MB")
-                    await asyncio.to_thread(output.write, chunk)
-            if not size or self._closing:
-                raise ValueError("文件为空或会话已结束")
-            self._video_task = asyncio.create_task(self._feed_video(path, temp))
-            transferred = True
-        finally:
-            if not transferred:
-                temp.cleanup()
-                self._upload_busy = False
-
-    async def _feed_video(self, path, temp):
-        iterator = audio_buckets(path) if self.input_source == "audio_file" else video_buckets(path)
-        sent = 0
-        try:
-            await self.send(
-                {"type": "media_status", "state": "processing", "seconds": 0}
-            )
-            started = asyncio.get_running_loop().time()
-            while True:
-                # Await an in-flight decoder even on cancellation before closing
-                # its generator; Python generators cannot be closed while running.
-                decode = asyncio.create_task(asyncio.to_thread(next, iterator, None))
-                try:
-                    bucket = await asyncio.shield(decode)
-                except asyncio.CancelledError:
-                    await decode
-                    raise
-                if bucket is None:
-                    break
-                now = int(time.time() * 1000)
-                start = max(self._audio_end, now)
-                if self.mode == "omni" and bucket.jpeg:
-                    await self.host.append_video_frame(VideoFrame(bucket.jpeg, start))
-                await self.host.append_audio(
-                    AudioChunk(bucket.pcm, start, start + 1000)
-                )
-                self._audio_end = start + 1000
-                sent += 1
-                await self.send(
-                    {"type": "media_status", "state": "feeding", "seconds": sent}
-                )
-                await asyncio.sleep(
-                    max(0, started + sent - asyncio.get_running_loop().time())
-                )
-            if not sent:
-                raise ValueError("文件没有可解码内容")
-            # Keep the model clock moving briefly after EOF so the last spoken
-            # question has time to receive a reply.
-            for _ in range(VIDEO_TAIL_SECONDS):
-                start = max(self._audio_end, int(time.time() * 1000))
-                await self.host.append_audio(
-                    AudioChunk(b"\0\0" * 16000, start, start + 1000)
-                )
-                self._audio_end = start + 1000
-                await asyncio.sleep(1)
-            await self.send(
-                {"type": "media_status", "state": "complete", "seconds": sent}
-            )
-            # Duplex generation needs a new input unit for every output unit,
-            # including replies and backend work that finish after the file.
-            self._video_idle_task = asyncio.create_task(self._video_idle())
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Uploaded media failed")
-            with suppress(Exception):
-                await self.send(
-                    {
-                        "type": "media_status",
-                        "state": "error",
-                        "seconds": sent,
-                        "error": "媒体处理失败，请检查文件格式和服务日志",
-                    }
-                )
-        finally:
-            iterator.close()
-            temp.cleanup()
-            self._upload_busy = False
-
-    async def _video_idle(self):
-        while not self._closing:
-            await asyncio.sleep(1)
-            start = max(self._audio_end, int(time.time() * 1000))
-            await self.host.append_audio(
-                AudioChunk(b"\0\0" * 16000, start, start + 1000)
-            )
-            self._audio_end = start + 1000

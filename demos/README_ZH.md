@@ -2,7 +2,7 @@
 
 [English](README.md) · **简体中文** · [项目总览](../README_ZH.md) · [Harness](../harness/README_ZH.md)
 
-基于 Realtime-Venus-Omni 或 Realtime-Venus-Audio，以及 Codex 任务后端的网页 Demo。Audio 模式提供麦克风与音频上传；Omni 模式提供摄像头加麦克风与视频上传。
+基于 Realtime-Venus-Omni 或 Realtime-Venus-Audio，以及 Codex 任务后端的网页 Demo。部署 Omni 权重提供视频全双工（摄像头加麦克风），部署 Audio 权重提供音频双工（麦克风）。
 
 ## 两个 loop，同一段对话
 
@@ -14,7 +14,7 @@
 
 | 组件 | 职责 | 实现入口 |
 | --- | --- | --- |
-| 浏览器 | 设备采集或视频上传、流式输入、语音播放、任务进度和产物下载。 | [`static/app.js`](static/app.js) |
+| 浏览器 | 设备采集、流式输入、语音播放、任务进度和产物下载。 | [`static/app.js`](static/app.js) |
 | 网页服务 · 8032 | 接收 HTTP/WebSocket 请求，管理浏览器会话，组装模型与 Harness 连接。 | [`server/app.py`](server/app.py)、[`server/resources.py`](server/resources.py) |
 | 会话 host | 排序媒体输入、消费模型输出、安排私有反馈、转交播放回执。 | [`server/session.py`](server/session.py)、[`VenusOmniServingHost`](../harness/bridge/host.py) |
 | 模型服务 · 8031 | 加载权重、维护模型状态、执行流式推理并生成原生语音。 | [`model/server.py`](model/server.py)、[`model/adapter.py`](model/adapter.py) |
@@ -88,11 +88,10 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 
 | 输入模式 | 如何体验 |
 | --- | --- |
-| **语音** | 允许麦克风访问，通过本地扬声器收听。 |
-| **摄像头** | 同时共享摄像头和麦克风，网页显示实时预览。 |
-| **视频** | 选择视频模式并上传本地文件，上限 **200 MB**。视频音轨与采样画面会流式送入模型。 |
+| **视频全双工**（Omni） | 同时共享摄像头和麦克风，网页显示实时预览。 |
+| **音频双工**（Audio） | 允许麦克风访问，通过本地扬声器收听。 |
 
-侧边任务面板支持查看进度、取消任务和下载产物。
+任务面板支持查看进度、取消任务和下载产物。
 
 模型同一时间支持**一个活跃会话**。网页服务断开后，模型保留这个会话 60 秒，等它重连接回；这期间如果网页服务重启后新开会话，旧会话立即让位。网页只发布在 `127.0.0.1` 上，浏览器信任它使用摄像头和麦克风。
 
@@ -106,7 +105,7 @@ Realtime-Venus-Omni/  # Or Realtime-Venus-Audio/
 
 | 字段 | 默认值 | 作用 |
 | --- | --- | --- |
-| `MODEL_TYPE` | `omni` | `omni`：摄像头加麦克风、视频上传；`audio`：麦克风、音频上传。 |
+| `MODEL_TYPE` | `omni` | `omni`：视频全双工（摄像头加麦克风）；`audio`：音频双工（麦克风）。 |
 | `MODEL_DIR` | —（必填） | 下载根目录，包含 `config.yaml` 和权重子目录；服务按 `MODEL_TYPE` 选用对应子目录。相对路径以 `./` 或 `../` 开头、相对 `deploy/model`（不写前缀时 Compose 会建一个空的命名卷）。以只读方式挂载。 |
 | `REFERENCE_AUDIO` | `assets/HT_ref_audio.wav` | 参考音色，相对所选的权重目录。 |
 | `MODEL_PORT` | `8031` | 你的电脑访问模型时用的端口。 |

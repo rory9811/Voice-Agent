@@ -1,4 +1,4 @@
-import { t } from "./i18n.js?v=20261029-task-agent";
+import { t } from "./i18n.js?v=20261030-duplex";
 
 /** Estimate voiced fundamental frequency with a normalized difference function.
  * Unvoiced sound and silence have no reliable pitch and return zero.
@@ -52,13 +52,8 @@ export class MicrophoneWaveform {
     this.lastPitchTime = 0;
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(this.canvas);
-    window.addEventListener("venus-theme", () => this.updateColors());
-    this.updateColors();
-  }
-  updateColors() {
-    const style = getComputedStyle(document.documentElement);
-    this.color = style.getPropertyValue("--cyan").trim();
-    this.baseline = style.getPropertyValue("--line").trim();
+    this.color = "#4ade80";
+    this.baseline = "rgba(255, 255, 255, 0.25)";
   }
   resize() {
     const rect = this.canvas.getBoundingClientRect();

@@ -151,7 +151,7 @@ The model runs on a GPU server (**at least one NVIDIA A100**); the web service, 
 cp .env.example .env
 ```
 
-In `.env`, set `MODEL_TYPE` (`omni`: camera with microphone and video upload; `audio`: microphone and audio upload), `MODEL_DIR` (the download root holding `config.yaml` and the checkpoint) and `VENUS_MODEL_TOKEN`, a shared secret generated once with `python3 -c "import secrets; print(secrets.token_urlsafe(24))"`. Then start it; the first run builds the image:
+In `.env`, set `MODEL_TYPE` (`omni`: video full-duplex with camera and microphone; `audio`: audio duplex with microphone), `MODEL_DIR` (the download root holding `config.yaml` and the checkpoint) and `VENUS_MODEL_TOKEN`, a shared secret generated once with `python3 -c "import secrets; print(secrets.token_urlsafe(24))"`. Then start it; the first run builds the image:
 
 ```bash
 docker compose up -d

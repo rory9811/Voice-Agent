@@ -64,7 +64,6 @@ export class AudioPlayer {
     this.epoch = 0;
     this.muted = false;
     this.chain = Promise.resolve();
-    this.level = 0;
     this.leadSeconds = leadSeconds;
     this.maxQueuedSeconds = maxQueuedSeconds;
   }
@@ -73,10 +72,7 @@ export class AudioPlayer {
       const Context = window.AudioContext || window.webkitAudioContext;
       this.context = new Context();
       this.gain = this.context.createGain();
-      this.analyser = this.context.createAnalyser();
-      this.analyser.fftSize = 256;
-      this.gain.connect(this.analyser).connect(this.context.destination);
-      this.samples = new Uint8Array(this.analyser.fftSize);
+      this.gain.connect(this.context.destination);
     }
     await this.context.resume();
   }
@@ -96,7 +92,6 @@ export class AudioPlayer {
     this.sources.clear();
     this.audibleSources.clear();
     this.cursor = 0;
-    this.level = 0;
     this.chain = Promise.resolve();
     this.onActivity(false);
   }
@@ -166,12 +161,5 @@ export class AudioPlayer {
     if (message.silent !== true) this.audibleSources.add(source);
     source.start(this.cursor);
     this.cursor += buffer.duration;
-  }
-  amplitude() {
-    if (!this.analyser || !this.sources.size) return 0;
-    this.analyser.getByteTimeDomainData(this.samples);
-    let energy = 0;
-    for (const value of this.samples) energy += (value - 128) ** 2;
-    return Math.min(1, Math.sqrt(energy / this.samples.length) / 34);
   }
 }

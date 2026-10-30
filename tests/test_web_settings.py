@@ -64,7 +64,7 @@ class WebResourcesTests(unittest.IsolatedAsyncioTestCase):
             save_setup(data, path)
             with patch('demos.server.resources.build_harness', return_value=MagicMock()):
                 resources = await real_resources(
-                    mode='omni', settings_path=path, server_url='http://10.0.0.1:8031',
+                    mode='camera', settings_path=path, server_url='http://10.0.0.1:8031',
                     tokenizer=None, model_type='omni', model_timeout_s=42,
                 )
             self.assertEqual(resources.serving._length_penalty, 1.3)

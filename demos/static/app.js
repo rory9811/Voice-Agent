@@ -1,14 +1,15 @@
-import { t, getLanguage, setLanguage, setAgent, AGENT_NAMES } from "./i18n.js?v=20261029-task-agent";
-import { Presence } from "./presence.js";
+import { t, getLanguage, setLanguage, setAgent, AGENT_NAMES } from "./i18n.js?v=20261030-duplex";
 import { AudioPlayer, encode } from "./audio.js?v=20261029-playback-lead";
 import { MediaCapture } from "./capture.js";
-import { MicrophoneWaveform } from "./waveform.js?v=20261029-task-agent";
-import { TaskTray } from "./tasks.js?v=20261029-task-agent";
+import { MicrophoneWaveform } from "./waveform.js?v=20261030-duplex";
+import { TaskTray } from "./tasks.js?v=20261030-duplex";
 
 const $ = (id) => document.getElementById(id);
+const ASSISTANT = "Venus";
 const state = {
   mode: "camera",
-  modelType: null,
+  inputModes: [],
+  model: "",
   phase: "idle",
   connected: false,
   connecting: false,
@@ -21,22 +22,12 @@ const state = {
   configuration: null,
   configured: null,
   checkingSettings: false,
-  file: null,
-  fileUrl: null,
-  upload: null,
-  uploadState: "",
   muted: false,
   outputMuted: false,
   transcript: new Map(),
   lastBackpressure: 0,
   online: true,
 };
-const audioTextKeys = new Set(["replaceVideo", "dropHint", "dropTypes", "videoMode", "intro", "multimodalHint", "videoReady", "startVideo", "chooseVideo", "uploading", "watching", "videoFinished", "videoFailed", "fileTooLarge", "invalidVideo", "videoHint"]);
-function mediaText(key) {
-  return t(state.modelType === "audio" && audioTextKeys.has(key) ? `audio_${key}` : key);
-}
-function previewMedia() { return $(state.modelType === "audio" ? "preview-audio" : "preview-video"); }
-
 const devices = { microphone: "", camera: "" };
 try {
   Object.assign(
@@ -44,7 +35,6 @@ try {
     JSON.parse(localStorage.getItem("venus-devices") || "{}"),
   );
 } catch {}
-const presence = new Presence($("presence-canvas"));
 const microphoneWaveform = new MicrophoneWaveform($("mic-visualizer"));
 const tasks = new TaskTray({ send, download: downloadArtifact });
 const player = new AudioPlayer({
@@ -60,7 +50,6 @@ const player = new AudioPlayer({
 });
 const capture = new MediaCapture($("preview-video"), {
   onChunk: sendInput,
-  onLevel: (level) => (presence.inputLevel = level),
   onEnded: () => {
     notify(t("deviceEnded"), true);
     void stopSession().catch(() => {});
@@ -94,7 +83,6 @@ function humanError(error) {
 function setPhase(phase) {
   state.phase = phase;
   document.body.dataset.phase = phase;
-  presence.phase = phase;
   render();
 }
 function send(message) {
@@ -129,101 +117,68 @@ function sendInput(pcm, jpeg) {
 function render() {
   const busy = state.connected || state.connecting || state.stopping;
   document.body.dataset.mode = state.mode;
-  document.body.dataset.modelType = state.modelType || "loading";
-  $("frontend-model-name").textContent = state.modelType ? `REALTIME-VENUS-${state.modelType.toUpperCase()}` : "REALTIME-VENUS";
-  for (const node of document.querySelectorAll("[data-media-key]")) node.textContent = mediaText(node.dataset.mediaKey);
-  $("video-file").accept = state.modelType === "audio" ? "audio/*,.wav,.mp3,.m4a,.flac,.ogg,.opus,.aac,.aiff,.aif,.wma" : "video/*,.mp4,.mov,.webm,.mkv,.avi";
-  $("camera-device").closest("label").hidden = state.modelType === "audio";
-  $("preview-audio").hidden = state.modelType !== "audio";
-  $("preview-video").hidden = state.modelType === "audio";
-  $("media-preview").classList.toggle("audio-file", state.modelType === "audio");
-  const micActive = Boolean(capture.stream) && state.mode !== "file" && !state.stopping;
-  microphoneWaveform.setState(micActive, state.muted);
-  document.body.classList.toggle("mic-open", micActive);
-  for (const button of document.querySelectorAll(".mode-button")) {
-    button.classList.toggle("selected", button.dataset.mode === state.mode);
-    button.setAttribute(
-      "aria-pressed",
-      String(button.dataset.mode === state.mode),
-    );
-    button.hidden = button.dataset.mode === (state.modelType === "audio" ? "camera" : "audio");
-    button.disabled = busy || state.checkingSettings || !state.modelType;
+  if (state.model) $("model-name").textContent = state.model;
+  for (const button of document.querySelectorAll(".mode-tab")) {
+    const available = state.inputModes.includes(button.dataset.mode);
+    button.setAttribute("aria-pressed", String(button.dataset.mode === state.mode));
+    button.disabled = busy || !available;
+    button.title = available ? "" : t("notDeployed");
   }
+  const previewing = state.mode === "camera" && Boolean(capture.stream);
+  const micActive = Boolean(capture.stream) && !state.stopping;
+  $("preview-video").hidden = !previewing;
+  microphoneWaveform.setState(micActive, state.muted);
+  $("media-placeholder").hidden = previewing || micActive;
+  $("placeholder-icon").setAttribute("href", state.mode === "camera" ? "#i-camera" : "#i-mic");
+  $("placeholder-label").textContent = t(state.mode === "camera" ? "cameraOff" : "microphoneOff");
+  $("status-lamp").hidden = !state.connected;
+  $("lamp-timer").textContent = state.connected ? elapsed() : "";
+  $("camera-field").hidden = state.mode !== "camera";
+  $("microphone-device").disabled = $("camera-device").disabled = busy;
   $("start-button").hidden = state.connected;
-  $("start-button").disabled = state.connecting || state.stopping || state.checkingSettings || !state.modelType;
+  $("start-button").disabled = state.connecting || state.stopping || state.checkingSettings || !state.inputModes.length;
   $("setup-banner").hidden = busy || state.configured !== false;
-  $("start-label").textContent = mediaText(
+  $("start-label").textContent = t(
     state.checkingSettings
       ? "checkingSettings"
       : state.configured === false && !busy
         ? "completeSettings"
         : state.stopping
-      ? "ending"
-      : state.connecting
-        ? "connecting"
-        : state.mode === "file"
-          ? state.file
-            ? "startVideo"
-            : "chooseVideo"
-          : "start",
+          ? "ending"
+          : state.connecting
+            ? "connecting"
+            : "start",
   );
   $("stop-button").hidden = !(state.connected || state.connecting);
   $("stop-button").disabled = state.stopping;
-  $("mute-mic").hidden = !state.connected || state.mode === "file";
+  $("mute-mic").hidden = !state.connected;
   $("mute-mic").setAttribute("aria-pressed", String(state.muted));
   $("mute-mic")
     .querySelector("use")
     .setAttribute("href", state.muted ? "#i-mic-off" : "#i-mic");
   $("mute-output").hidden = !state.connected;
   $("mute-output").setAttribute("aria-pressed", String(state.outputMuted));
-  $("upload-zone").hidden = state.mode !== "file" || Boolean(state.file);
-  const preview =
-    (state.mode === "camera" && Boolean(capture.stream)) ||
-    (state.mode === "file" && Boolean(state.file));
-  $("media-preview").hidden = !preview;
-  $("experience").classList.toggle("previewing", preview);
-  $("media-preview").classList.toggle("camera", state.mode === "camera");
-  $("replace-video").hidden = state.mode !== "file" || !state.file || busy;
-  $("preview-label").textContent = mediaText(
-    state.mode === "camera"
-      ? "yourView"
-      : state.connected
-        ? "watching"
-        : "videoReady",
+  $("status-phase").textContent = t(
+    state.connecting
+      ? "connecting"
+      : state.stopping
+        ? "ending"
+        : state.phase === "speaking"
+          ? "speaking"
+          : state.connected
+            ? "listening"
+            : !state.online
+              ? "offline"
+              : state.configured === false
+                ? "setupNeeded"
+                : "available",
   );
-  previewMedia().controls = state.mode === "file" && !busy;
-  const presenceKey = state.connecting
-    ? "connecting"
-    : state.phase === "speaking"
-      ? "speaking"
-      : state.connected
-        ? state.mode === "file"
-          ? "watching"
-          : "listening"
-        : state.mode === "file"
-          ? "videoReady"
-          : "presenceIdle";
-  $("presence-label").textContent = mediaText(presenceKey);
-  let hint =
-    state.mode === "camera"
-      ? "cameraHint"
-      : state.mode === "file"
-        ? "videoHint"
-        : "startHint";
-  if (state.connected)
-    hint =
-      state.mode === "file"
-        ? state.uploadState === "complete"
-          ? "videoFinished"
-          : "watching"
-        : state.muted
-          ? "mutedHint"
-          : "liveHint";
-  if (state.uploadState === "uploading") hint = "uploading";
+  let hint = state.mode === "camera" ? "cameraHint" : "startHint";
+  if (state.connected) hint = state.muted ? "mutedHint" : "liveHint";
   if (state.connecting) hint = "connecting";
   if (state.stopping) hint = "ending";
   if (!busy && state.configured === false) hint = "notConfigured";
-  $("control-hint").textContent = mediaText(hint);
+  $("control-hint").textContent = t(hint);
   const status = $("connection-state");
   status.classList.toggle("pending", state.connecting || state.stopping);
   status.classList.toggle("offline", !state.online);
@@ -232,13 +187,9 @@ function render() {
     : state.connecting
       ? t("connecting")
       : state.connected
-        ? `${t("live")} · ${elapsed()}`
+        ? t("live")
         : t(!state.online ? "offline" : state.configured === false ? "setupNeeded" : "available");
   $("reset-button").disabled = state.connecting || state.stopping;
-  if (!state.transcript.size)
-    $("caption-text").textContent = mediaText(
-      state.mode === "file" ? "videoHint" : "prompt",
-    );
 }
 function elapsed() {
   const seconds = Math.max(
@@ -249,18 +200,8 @@ function elapsed() {
 }
 function setMode(mode) {
   if (state.connected || state.connecting || state.stopping) return;
+  if (!state.inputModes.includes(mode)) return;
   state.mode = mode;
-  state.uploadState = "";
-  previewMedia().pause();
-  previewMedia().srcObject = null;
-  if (mode === "file" && state.fileUrl) previewMedia().src = state.fileUrl;
-  else {
-    previewMedia().removeAttribute("src");
-    previewMedia().load();
-  }
-  $("video-name").textContent =
-    mode === "file" && state.file ? state.file.name : "";
-  $("video-time").textContent = "";
   render();
 }
 async function refreshStatus(fresh = false) {
@@ -269,16 +210,10 @@ async function refreshStatus(fresh = false) {
     if (!response.ok) throw Error();
     const status = await response.json();
     state.online = true;
-    if (!["audio", "omni"].includes(status.model_type)) throw Error("Unknown frontend model type");
-    if (state.modelType !== status.model_type && !state.connected && !state.connecting) {
-      if (state.fileUrl) URL.revokeObjectURL(state.fileUrl);
-      state.file = state.fileUrl = null;
-      for (const media of [$("preview-video"), $("preview-audio")]) {
-        media.pause(); media.removeAttribute("src"); media.load();
-      }
-      state.modelType = status.model_type;
-      state.mode = status.model_type === "audio" ? "audio" : "camera";
-    }
+    state.inputModes = status.input_modes;
+    state.model = status.model;
+    if (!state.inputModes.includes(state.mode) && !state.connected && !state.connecting)
+      state.mode = state.inputModes[0];
     state.configured = status.configured;
     return status;
   } catch {
@@ -308,24 +243,8 @@ async function requireSettings() {
     render();
   }
 }
-async function chooseMode(mode) {
-  if (state.connected || state.connecting || state.stopping) return;
-  if (await requireSettings()) {
-    if (mode === "file" || mode === (state.modelType === "audio" ? "audio" : "camera")) setMode(mode);
-  }
-}
-async function chooseVideo() {
-  if (state.connected || state.connecting || state.stopping) return;
-  if (!(await requireSettings())) return;
-  if (state.connected || state.connecting || state.stopping) return;
-  $("video-file").click();
-}
 async function startSession() {
   if (state.connected || state.connecting || state.stopping || state.checkingSettings) return;
-  if (state.mode === "file" && !state.file) {
-    await chooseVideo();
-    return;
-  }
   if (state.configured === false) {
     await requireSettings();
     return;
@@ -353,13 +272,10 @@ async function startSession() {
     tasks.clear();
     clearTranscript();
     state.muted = false;
-    state.uploadState = "";
-    if (state.mode !== "file") {
-      const started = await capture.start(state.mode, devices);
-      if (!started || epoch !== state.epoch) return;
-      render();
-      void enumerateDevices();
-    }
+    const started = await capture.start(state.mode, devices);
+    if (!started || epoch !== state.epoch) return;
+    render();
+    void enumerateDevices();
     if (epoch !== state.epoch) return;
     const ready = await connect(epoch);
     if (epoch !== state.epoch) return;
@@ -370,7 +286,6 @@ async function startSession() {
     state.startedAt = Date.now();
     capture.active = true;
     setPhase("listening");
-    if (state.mode === "file") await uploadVideo(epoch);
   } catch (error) {
     if (epoch !== state.epoch) return;
     await stopSession().catch(() => {});
@@ -385,10 +300,8 @@ async function startSession() {
 }
 function connect(epoch) {
   return new Promise((resolve, reject) => {
-    const mode = state.modelType,
-      source = state.mode === "file" ? (state.modelType === "audio" ? "audio_file" : "video") : "live";
     const socket = new WebSocket(
-      `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws?mode=${mode}&source=${source}`,
+      `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws?mode=${state.mode}`,
     );
     state.socket = socket;
     let settled = false;
@@ -447,7 +360,6 @@ function connect(epoch) {
       else if (message.type === "text")
         appendText(message.text, message.utterance_id);
       else if (message.type === "works") tasks.update(message.works);
-      else if (message.type === "media_status" || message.type === "video_status") videoStatus(message);
       else if (message.type === "model_link")
         message.state === "down"
           ? notify(t("modelReconnecting"), true, true)
@@ -481,8 +393,6 @@ async function stopSession(notifyServer = true) {
   state.connected = false;
   state.epoch++;
   setPhase("ending");
-  state.upload?.abort();
-  state.upload = null;
   player.clear();
   capture.active = false;
   const socket = state.socket;
@@ -514,9 +424,6 @@ async function stopSession(notifyServer = true) {
       state.sessionId = null;
       state.token = null;
       state.stopping = false;
-      state.uploadState = "";
-      $("upload-progress").hidden = true;
-      previewMedia().pause();
       tasks.end();
       // A reconnecting notice belongs to the session that just ended.
       if (toastSticky) $("toast").hidden = true;
@@ -533,91 +440,6 @@ async function stopSession(notifyServer = true) {
     state.stopPromise = null;
   }
 }
-async function selectFile(file) {
-  if (!file || state.connected || state.connecting || state.stopping) return;
-  if (file.size > 200 * 1024 * 1024) {
-    notify(mediaText("fileTooLarge"), true);
-    return;
-  }
-  const validFile = state.modelType === "audio"
-    ? (file.type.startsWith("audio/") || /\.(wav|mp3|m4a|flac|ogg|opus|aac|aiff|aif|wma)$/i.test(file.name))
-    : (file.type.startsWith("video/") || /\.(mp4|mov|webm|mkv|avi)$/i.test(file.name));
-  if (!validFile) {
-    notify(mediaText("invalidVideo"), true);
-    return;
-  }
-  if (!(await requireSettings())) return;
-  if (state.connected || state.connecting || state.stopping) return;
-  if (state.fileUrl) URL.revokeObjectURL(state.fileUrl);
-  state.file = file;
-  state.fileUrl = URL.createObjectURL(file);
-  setMode("file");
-}
-async function uploadVideo(epoch) {
-  state.uploadState = "uploading";
-  $("upload-progress").hidden = false;
-  const bar = $("upload-progress").querySelector("span");
-  bar.style.width = "0%";
-  render();
-  await new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    state.upload = xhr;
-    xhr.open(
-      "POST",
-      `/api/sessions/${encodeURIComponent(state.sessionId)}/${state.modelType === "audio" ? "audio" : "video"}`,
-    );
-    xhr.setRequestHeader("X-Venus-Session-Token", state.token);
-    xhr.setRequestHeader(
-      "Content-Type",
-      state.file.type || "application/octet-stream",
-    );
-    xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable)
-        bar.style.width = `${Math.round((event.loaded / event.total) * 100)}%`;
-    };
-    xhr.onload = () => {
-      state.upload = null;
-      if (xhr.status >= 200 && xhr.status < 300) resolve();
-      else {
-        let detail;
-        try {
-          detail = JSON.parse(xhr.responseText).detail;
-        } catch {}
-        reject(Error(detail || mediaText("videoFailed")));
-      }
-    };
-    xhr.onerror = () => reject(Error(t("network")));
-    xhr.onabort = () =>
-      reject(Object.assign(Error("Upload cancelled"), { name: "AbortError" }));
-    xhr.send(state.file);
-  });
-  if (epoch !== state.epoch) return;
-  state.uploadState = "feeding";
-  $("upload-progress").hidden = true;
-  const video = previewMedia();
-  video.currentTime = 0;
-  await video.play().catch(() => {});
-  render();
-}
-function videoStatus(message) {
-  state.uploadState = message.state;
-  if (message.seconds !== undefined)
-    $("video-time").textContent = `${message.seconds}s`;
-  if (message.state === "feeding") {
-    const video = previewMedia();
-    if (
-      Number.isFinite(video.duration) &&
-      Math.abs(video.currentTime - message.seconds) > 2
-    )
-      video.currentTime = Math.min(video.duration, message.seconds);
-  }
-  if (message.state === "complete") previewMedia().pause();
-  if (message.state === "error") {
-    notify(mediaText("videoFailed"), true);
-    previewMedia().pause();
-  }
-  render();
-}
 function clearTranscript() {
   state.transcript.clear();
   $("transcript").replaceChildren();
@@ -626,9 +448,6 @@ function clearTranscript() {
   empty.dataset.i18n = "historyEmpty";
   empty.textContent = t("historyEmpty");
   $("transcript").append(empty);
-  $("caption").classList.remove("has-speech");
-  $("caption-speaker").hidden = true;
-  $("caption-text").textContent = mediaText("prompt");
 }
 function appendText(text, id) {
   if (!text) return;
@@ -639,7 +458,7 @@ function appendText(text, id) {
     const node = document.createElement("article");
     node.className = "transcript-entry";
     const heading = document.createElement("header");
-    heading.textContent = "VENUS";
+    heading.textContent = ASSISTANT;
     const time = document.createElement("time");
     time.textContent = new Date().toLocaleTimeString(getLanguage(), {
       hour: "2-digit",
@@ -654,10 +473,6 @@ function appendText(text, id) {
   }
   entry.text += text;
   entry.paragraph.textContent = entry.text;
-  $("caption").classList.add("has-speech");
-  $("caption-speaker").hidden = false;
-  $("caption-text").textContent = entry.text;
-  $("caption-text").scrollTop = $("caption-text").scrollHeight;
   $("transcript").scrollTop = $("transcript").scrollHeight;
 }
 async function downloadArtifact(workId, artifact) {
@@ -898,7 +713,6 @@ async function openSettings(required = false) {
     $("routing-timeout").value = data.routing.timeout_s;
     $("response-model").value = data.responses.model || "";
     $("response-effort").value = data.responses.effort;
-    void enumerateDevices();
     const busy = state.connected || state.connecting || state.stopping;
     for (const node of $("settings-form").querySelectorAll(
       "input,select,button",
@@ -963,11 +777,6 @@ $("settings-form").onsubmit = async (event) => {
     state.configuration = result;
     state.configured = result.configured;
     $("gemini-key").value = "";
-    devices.microphone = $("microphone-device").value;
-    devices.camera = $("camera-device").value;
-    try {
-      localStorage.setItem("venus-devices", JSON.stringify(devices));
-    } catch {}
     renderAgentLogin();
     if (!result.configured) {
       $("settings-message").textContent = t("settingsSavedLoginNeeded");
@@ -983,8 +792,15 @@ $("settings-form").onsubmit = async (event) => {
     button.disabled = false;
   }
 };
-for (const button of document.querySelectorAll(".mode-button"))
-  button.onclick = () => void chooseMode(button.dataset.mode);
+for (const button of document.querySelectorAll(".mode-tab"))
+  button.onclick = () => setMode(button.dataset.mode);
+for (const key of ["microphone", "camera"])
+  $(key + "-device").onchange = (event) => {
+    devices[key] = event.target.value;
+    try {
+      localStorage.setItem("venus-devices", JSON.stringify(devices));
+    } catch {}
+  };
 $("start-button").onclick = () => void startSession();
 $("stop-button").onclick = () => void stopSession().catch(() => {});
 $("mute-mic").onclick = () => {
@@ -997,32 +813,8 @@ $("mute-output").onclick = () => {
   player.setMuted(state.outputMuted);
   render();
 };
-$("video-file").onchange = (event) => void selectFile(event.target.files[0]);
-$("replace-video").onclick = () => void chooseVideo();
-$("upload-zone").onclick = (event) => {
-  event.preventDefault();
-  void chooseVideo();
-};
-$("upload-zone").onkeydown = (event) => {
-  if (event.key === "Enter" || event.key === " ") {
-    event.preventDefault();
-    void chooseVideo();
-  }
-};
-for (const name of ["dragenter", "dragover"])
-  $("upload-zone").addEventListener(name, (event) => {
-    event.preventDefault();
-    $("upload-zone").classList.add("dragging");
-  });
-for (const name of ["dragleave", "drop"])
-  $("upload-zone").addEventListener(name, (event) => {
-    event.preventDefault();
-    $("upload-zone").classList.remove("dragging");
-    if (name === "drop") void selectFile(event.dataTransfer.files[0]);
-  });
 $("settings-button").onclick = () => void openSettings();
 $("complete-settings").onclick = () => void openSettings(true);
-$("history-button").onclick = () => $("history-dialog").showModal();
 for (const dialog of document.querySelectorAll("dialog")) {
   dialog.querySelector(".dialog-close").onclick = () => dialog.close();
   dialog.addEventListener("click", (event) => {
@@ -1039,14 +831,9 @@ for (const dialog of document.querySelectorAll("dialog")) {
 }
 $("reset-button").onclick = async () => {
   const restart = state.connected;
-  $("history-dialog").close();
   try {
     await player.prime();
     await stopSession();
-    if (status.busy) throw Error(t("busy"));
-    state.checkingSettings = false;
-    state.connecting = true;
-    setPhase("connecting");
     tasks.clear();
     clearTranscript();
     if (restart) await startSession();
@@ -1064,25 +851,18 @@ $("save-transcript").onclick = () => {
         [...state.transcript.values()]
           .map(
             (entry) =>
-              `Venus · ${new Date(entry.time).toLocaleString()}\n${entry.text}`,
+              `${ASSISTANT} · ${new Date(entry.time).toLocaleString()}\n${entry.text}`,
           )
           .join("\n\n"),
       ],
       { type: "text/plain;charset=utf-8" },
     ),
-    "Venus-conversation.txt",
+    `${ASSISTANT}-conversation.txt`,
   );
 };
 $("language-button").onclick = () =>
   setLanguage(getLanguage() === "en" ? "zh" : "en");
-function renderTheme() {
-  const label = t(document.documentElement.dataset.theme === "dark" ? "lightTheme" : "darkTheme");
-  $("theme-button").setAttribute("aria-label", label);
-  $("theme-button").title = label;
-}
-window.addEventListener("venus-theme", renderTheme);
 window.addEventListener("venus-language", () => {
-  renderTheme();
   render();
   if (state.configuration) renderAgentLogin();
   void enumerateDevices();
@@ -1090,7 +870,6 @@ window.addEventListener("venus-language", () => {
 window.addEventListener("pagehide", () => {
   state.epoch++;
   player.clear();
-  state.upload?.abort();
   capture.stop();
   if (state.socket?.readyState === WebSocket.OPEN)
     send({ type: "stop_session" });
@@ -1108,12 +887,11 @@ setInterval(() => {
     void refreshStatus();
 }, 15000);
 function animate(time) {
-  presence.outputLevel = player.amplitude();
   if (microphoneWaveform.active && !document.hidden)
     microphoneWaveform.draw(capture.readWaveform(), time);
   requestAnimationFrame(animate);
 }
 requestAnimationFrame(animate);
-renderTheme();
 render();
+void enumerateDevices();
 void refreshStatus();

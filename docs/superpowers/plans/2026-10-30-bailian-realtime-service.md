@@ -25,6 +25,7 @@
 - “两个功能”指交互模式：删除文件上传、半双工、轮次对话等其他模式；后台任务托盘和设置面板是委托能力的组成部分，保留。
 - Venus 同一时间只部署一种权重，另一个模式的标签置灰；百炼两个模式都可用，音频双工只是不发画面。
 - demo 仓库没有 LICENSE 文件，只参考布局和交互，不复制它的代码和资源。
+- 被打断的进度和最终结果都不自动重念：系统分不清插话是不想听还是临时有事，贸然重念比少念一次更打扰；最终结果留在任务托盘。第一版不做“告诉模型用户没听完”。
 - 断线不续接：百炼文档没有续接机制，断线即结束会话并提示。
 - API Key 只放环境变量，不进 `harness.json`，也不下发给浏览器。
 
@@ -177,7 +178,7 @@ Expected: 记录通过数；已有失败写进 commit 说明，后续任务不�
 - Produces（`harness/bridge/serving.py`）：
   - `ModelOutputStep`：删除 `total_token_ids`，新增 `text: str = ""`、`delegates: tuple[str, ...] = ()`。未结束的步骤三者（text、delegates、audio）不能全空。`finish_reason` 取值 `"completed" | "interrupted" | "failed"`。
   - `UserSpeechStarted(session_id: str, incarnation: int, at_ms: int)`：新事件。
-  - `ResultAppend(session_id, incarnation, work_id, attempt_id, text: str)`、`ResultApplied(session_id, incarnation, work_id, attempt_id, generation_id, generation_epoch, applied_at_ms)`：替换 `PrefillAppend`、`PrefillApplied`；`PrefillVisibility` 删除。
+  - `ResultAppend(session_id, incarnation, work_id, attempt_id, text: str, final: bool)`（`final` 由 host 按 `injection.result.status != "pending"` 填写）、`ResultApplied(session_id, incarnation, work_id, attempt_id, generation_id, generation_epoch, applied_at_ms)`：替换 `PrefillAppend`、`PrefillApplied`；`PrefillVisibility` 删除。
   - `ServingEvent = InputAccepted | ModelOutputStep | ResultApplied | UserSpeechStarted`。
   - `SessionOpened`：删除 `capabilities` 和 `model_revision`；`SessionCapabilities`、`RawTokenMode`、`PROTOCOL_VERSION`、`VideoSegmentAppend` 删除。`OpenSession` 删除 `protocol_version`。
   - port 方法：`send_audio`、`send_video_frame`、`send_result(request: ResultAppend)`、`send_playback_ack`、`next_event`、`close_session`、`open_session`。
@@ -209,6 +210,24 @@ async def test_interrupting_result_does_not_poison(self):
     session.delivery_interrupted.assert_called_once_with(INJECTION)
     self.assertIsNone(host._backend_delivery)
     await host.append_audio(CHUNK)  # 会话仍可用
+
+async def test_interrupted_progress_is_not_resent(self):
+    # 进度（status="pending"）播放中 → UserSpeechStarted：标记 interrupted，之后 begin_backend_turn 不重发它
+    session.delivery_interrupted.assert_called_once_with(PROGRESS)
+    self.assertFalse(await host.begin_backend_turn())
+
+async def test_interrupted_final_result_is_not_resent(self):
+    # 最终结果同样不重念：用户可能就是不想听了，结果留在任务托盘
+    session.delivery_interrupted.assert_called_once_with(INJECTION)
+    self.assertFalse(await host.begin_backend_turn())
+
+async def test_superseded_progress_is_discarded_before_sending(self):
+    # injection_is_current 返回 False：不调用 send_result，调用 discard_injection
+    session.discard_injection.assert_awaited_once_with(PROGRESS)
+    self.assertFalse([r for r in serving.sent if isinstance(r, ResultAppend)])
+
+async def test_result_append_marks_progress_and_final(self):
+    self.assertEqual([r.final for r in sent_results], [False, True])
 
 async def test_late_ack_after_interruption_is_ignored(self):
     # 打断后再对该 utterance 确认：不抛异常，也不转发给 serving
@@ -296,7 +315,7 @@ git commit -m "refactor(bridge): semantic model events with interruption"
 | `response.audio.delta` | 入队带音频的步骤，`audio_chunk_seq` 从 1 连续递增 |
 | `response.function_call_arguments.done` | 校验（见 Step 3）：通过则入队 `delegates` 步骤，并记下 `call_id` |
 | `response.done` | 入队结束步骤，带上剩余文字；`status` 映射为 `completed/interrupted/failed`（`cancelled` → `interrupted`）。对已接受或被拒的调用发 `function_call_output`；**仅当这一轮没有音频且接受了调用**时再发 `response.create`，让模型口头应答 |
-| `send_result` | 放入待发队列；模型空闲时发 `conversation.item.create`（`role=system`，`input_text`，`[后台结果] ` + 文本）和 `response.create` |
+| `send_result` | 放入待发队列；模型空闲时发 `conversation.item.create`（`role=system`，`input_text`，`final=True` 时前缀 `[后台结果] `，否则前缀 `[后台进度] `）和 `response.create` |
 | `error`，`type=server_error` | 会话结束，抛 `RemoteServingError` |
 | `error`，其他 type | 记日志；若有已发出未生效的结果，放回待发队列等下次空闲 |
 | 连接断开 | `next_event` 和 `send_*` 抛 `RemoteModelUnavailable("model_link_lost", ...)` |
@@ -334,6 +353,9 @@ async def test_result_waits_while_user_speaks(self):
     # speech_started 后 send_result：不发；speech_stopped 且无回复后才发
 async def test_result_waits_for_active_response(self):
 async def test_rejected_result_is_retried_when_idle(self):
+async def test_progress_and_final_use_different_prefixes(self):
+    self.assertTrue(texts[0].startswith("[后台进度] "))
+    self.assertTrue(texts[1].startswith("[后台结果] "))
 async def test_result_applied_on_response_created(self):
 async def test_speech_started_cancels_active_response(self):
     # 之后到达的 audio.delta 被丢弃；response.done(cancelled) → finish_reason == "interrupted"
@@ -364,7 +386,8 @@ Expected: FAIL（`demos.bailian.port` 不存在）。
 # 输入说明
 - 用户语音：当前对话内容。
 - 摄像头画面：可能有，也可能没有。
-- 以“[后台结果]”开头的系统消息：后台任务的进度或结果，用户听不到原文。
+- 以“[后台进度]”开头的系统消息：任务仍在进行，用户听不到原文。
+- 以“[后台结果]”开头的系统消息：任务已经结束，内容是结果或失败原因，用户听不到原文。
 
 # 生成规则
 判断是否调用 delegate_task：
@@ -375,8 +398,9 @@ Expected: FAIL（`demos.bailian.port` 不存在）。
 调用时：
 - 先用一句话告诉用户已经开始处理，再调用工具；不要编造结果。
 - objective 写完整任务，把“这个”“刚才那个”还原成明确内容。
-收到后台结果时：
-- 用口语转述要点，不提“后台结果”这个说法。
+收到后台消息时：
+- 用口语转述要点，不提“后台进度”“后台结果”这些说法。
+- 收到后台进度时，用一句话说明还在进行，不说成已完成，不推测最终结果。
 - 结果表示失败时，直接说明没办成以及原因，不要猜测答案。
 信息不足时：
 - 听不清或没有画面时，如实说明并请用户重复或打开摄像头，不要编造内容。

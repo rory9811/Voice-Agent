@@ -90,7 +90,7 @@ def fetch_model(server_url, token=None, timeout_s=30.0):
 
 
 async def real_resources(*, mode, settings_path, server_url, tokenizer, model_type, model_timeout_s):
-    if mode not in {"omni", "audio"}:
+    if mode not in {"camera", "audio"}:
         raise ValueError("Unknown input mode")
     setup = load_setup(settings_path)
     agent = build_harness(setup)

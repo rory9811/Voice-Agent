@@ -1,8 +1,8 @@
 /** Ordered one-second input units. Slow links drop whole units, never half a pair. */
 import { resample, pcm16 } from "./audio.js?v=20261029-playback-lead";
 export class MediaCapture {
-  constructor(video, { onChunk, onLevel, onEnded, onBackpressure }) {
-    Object.assign(this, { video, onChunk, onLevel, onEnded, onBackpressure });
+  constructor(video, { onChunk, onEnded, onBackpressure }) {
+    Object.assign(this, { video, onChunk, onEnded, onBackpressure });
     this.generation = 0;
     this.stream = null;
     this.context = null;
@@ -79,9 +79,6 @@ export class MediaCapture {
     node.port.onmessage = ({ data }) => {
       if (generation !== this.generation || !(data instanceof Float32Array))
         return;
-      let energy = 0;
-      for (const value of data) energy += value * value;
-      this.onLevel(this.muted ? 0 : Math.min(1, Math.sqrt(energy / data.length) * 7));
       if (!this.active) {
         this.pending = new Float32Array(0);
         return;
@@ -150,7 +147,6 @@ export class MediaCapture {
   setMuted(value) {
     this.muted = value;
     this.stream?.getAudioTracks().forEach((track) => (track.enabled = !value));
-    if (value) this.onLevel(0);
   }
   readWaveform() {
     if (!this.analyser || !this.context || this.muted) return null;
@@ -175,6 +171,5 @@ export class MediaCapture {
     this.context = null;
     if (context) await context.close().catch(() => {});
     this.pending = new Float32Array(0);
-    this.onLevel(0);
   }
 }

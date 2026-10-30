@@ -10,7 +10,7 @@ class ModelErrorCodeTests(unittest.IsolatedAsyncioTestCase):
     async def test_session_reports_model_code_to_browser(self):
         websocket = MagicMock(accept=AsyncMock(), send_json=AsyncMock(), close=AsyncMock())
         factory = AsyncMock(side_effect=RemoteModelUnavailable("model_busy", "busy"))
-        await WebAgentSession(websocket, factory, mode="omni").run()
+        await WebAgentSession(websocket, factory, mode="camera").run()
         sent = [call.args[0] for call in websocket.send_json.await_args_list]
         self.assertIn("model_busy", [message.get("code") for message in sent])
 
@@ -32,7 +32,7 @@ class ModelErrorCodeTests(unittest.IsolatedAsyncioTestCase):
         )
         resources = MagicMock(model="Realtime-Venus-Omni", close=AsyncMock())
         with patch("demos.server.session.VenusOmniServingHost.open", AsyncMock(return_value=host)):
-            await WebAgentSession(websocket, AsyncMock(return_value=resources), mode="omni").run()
+            await WebAgentSession(websocket, AsyncMock(return_value=resources), mode="camera").run()
         fatal = [call.args[0] for call in websocket.send_json.await_args_list
                  if call.args[0]["type"] == "fatal_error"]
         self.assertEqual([message.get("code") for message in fatal], ["model_link_lost"])
