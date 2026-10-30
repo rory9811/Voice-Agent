@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="demos/static/venus-logo-white.gif" width="120" alt="Realtime-Venus" />
+<img src="demos/static/venus-logo.png" width="120" alt="Realtime-Venus" />
 
 # Realtime-Venus
 

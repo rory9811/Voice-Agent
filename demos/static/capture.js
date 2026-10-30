@@ -1,5 +1,5 @@
 /** Ordered one-second input units. Slow links drop whole units, never half a pair. */
-import { resample, pcm16 } from "./audio.js?v=20261029-playback-lead";
+import { resample, pcm16 } from "./audio.js";
 export class MediaCapture {
   constructor(video, { onChunk, onEnded, onBackpressure }) {
     Object.assign(this, { video, onChunk, onEnded, onBackpressure });
@@ -61,7 +61,7 @@ export class MediaCapture {
     const context = new Context();
     this.context = context;
     await context.resume();
-    await context.audioWorklet.addModule("/static/capture-worklet.js");
+    await context.audioWorklet.addModule("/assets/capture-worklet.js");
     if (generation !== this.generation) {
       await context.close().catch(() => {});
       return false;

@@ -27,6 +27,15 @@ from .session import WebAgentSession
 from demos.variants import model_name
 
 
+class RevalidatedStaticFiles(StaticFiles):
+    """Without this a browser may pair a new page with an old script it kept."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 def create_app(*, settings_path, model_type, tokenizer, model_server_url, model_timeout_s=180.0):
     frontend_model = model_name(model_type)
     input_modes = ["audio"] if model_type == "audio" else ["camera"]
@@ -36,7 +45,7 @@ def create_app(*, settings_path, model_type, tokenizer, model_server_url, model_
     app = FastAPI(
         title="Realtime-Venus", docs_url=None, redoc_url=None, openapi_url=None
     )
-    app.mount("/static", StaticFiles(directory=static), name="static")
+    app.mount("/assets", RevalidatedStaticFiles(directory=static), name="assets")
 
     @app.middleware("http")
     async def only_local_hosts(request, call_next):

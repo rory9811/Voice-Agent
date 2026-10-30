@@ -1,8 +1,8 @@
-import { t, getLanguage, setLanguage, setAgent, AGENT_NAMES } from "./i18n.js?v=20261030-duplex";
-import { AudioPlayer, encode } from "./audio.js?v=20261029-playback-lead";
+import { t, getLanguage, setLanguage, setAgent, AGENT_NAMES } from "./i18n.js";
+import { AudioPlayer, encode } from "./audio.js";
 import { MediaCapture } from "./capture.js";
-import { MicrophoneWaveform } from "./waveform.js?v=20261030-duplex";
-import { TaskTray } from "./tasks.js?v=20261030-duplex";
+import { MicrophoneWaveform } from "./waveform.js";
+import { TaskTray } from "./tasks.js";
 
 const $ = (id) => document.getElementById(id);
 const ASSISTANT = "Venus";
