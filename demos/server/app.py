@@ -50,23 +50,23 @@ def create_app(*, settings_path, model_type, tokenizer, model_server_url, model_
     @app.middleware("http")
     async def only_local_hosts(request, call_next):
         if not local_host(request.headers.get("host")):
-            return Response("Host rejected", status_code=403)
+            return Response("不接受这个访问地址", status_code=403)
         return await call_next(request)
 
     def same_origin(request):
         origin = request.headers.get("origin")
         if origin and urlsplit(origin).netloc != request.headers.get("host"):
-            raise HTTPException(403, "Origin rejected")
+            raise HTTPException(403, "不接受这个来源")
 
     def authorized_session(sid, request):
         same_origin(request)
         session = sessions.get(sid)
         if session is None or not session.host:
-            raise HTTPException(404, "Session has ended")
+            raise HTTPException(404, "对话已结束")
         if not secrets.compare_digest(
             request.headers.get("x-venus-session-token", ""), session.upload_token
         ):
-            raise HTTPException(403, "Session token rejected")
+            raise HTTPException(403, "会话令牌无效")
         return session
 
     @app.get("/")
@@ -91,7 +91,7 @@ def create_app(*, settings_path, model_type, tokenizer, model_server_url, model_
             )
         except (ValueError, TypeError, OSError, KeyError):
             raise HTTPException(
-                400, "Cannot read local settings / 无法读取配置"
+                400, "无法读取配置"
             ) from None
 
     @app.post("/api/config")
@@ -100,16 +100,16 @@ def create_app(*, settings_path, model_type, tokenizer, model_server_url, model_
         if not secrets.compare_digest(
             request.headers.get("x-venus-config-token", ""), configuration.token
         ):
-            raise HTTPException(403, "Open settings before saving")
+            raise HTTPException(403, "请先打开设置再保存")
         if sessions:
             raise HTTPException(
-                409, "End your conversation before changing settings / 请先结束会话"
+                409, "请先结束会话"
             )
         raw = await request.body()
         if len(raw) > 128 * 1024:
-            raise HTTPException(413, "Settings are too large")
+            raise HTTPException(413, "设置内容过大")
         if sessions:
-            raise HTTPException(409, "End your conversation before changing settings")
+            raise HTTPException(409, "请先结束对话")
         try:
             result = configuration.save(json.loads(raw))
             if not result["ok"]:
@@ -121,7 +121,7 @@ def create_app(*, settings_path, model_type, tokenizer, model_server_url, model_
             raise HTTPException(409, str(exc)) from None
         except (ValueError, TypeError, OSError, KeyError):
             raise HTTPException(
-                400, "Invalid settings / 配置无效，请检查输入"
+                400, "配置无效，请检查输入"
             ) from None
 
     @app.get("/api/agent-login")
@@ -129,7 +129,7 @@ def create_app(*, settings_path, model_type, tokenizer, model_server_url, model_
         try:
             return await asyncio.to_thread(configuration.agent_login, agent)
         except (ValueError, TypeError, OSError, KeyError):
-            raise HTTPException(400, "Unknown task agent") from None
+            raise HTTPException(400, "未知的任务执行器") from None
 
     @app.get("/api/status")
     async def status(fresh: bool = False):
@@ -152,7 +152,7 @@ def create_app(*, settings_path, model_type, tokenizer, model_server_url, model_
         mode = websocket.query_params.get("mode", input_modes[0])
         if mode not in input_modes:
             await websocket.accept()
-            await websocket.send_json({"type": "fatal_error", "code": "input_mode", "error": "This mode is not available on the deployed model"})
+            await websocket.send_json({"type": "fatal_error", "code": "input_mode", "error": "当前部署不支持这个模式"})
             await websocket.close(code=1008)
             return
         revision = configuration.revision()
@@ -164,9 +164,9 @@ def create_app(*, settings_path, model_type, tokenizer, model_server_url, model_
                 {
                     "type": "fatal_error",
                     "code": "busy" if sessions else "configuration",
-                    "error": "Another conversation is using Venus / 已有会话正在使用 Venus"
+                    "error": "已有会话正在使用 Venus"
                     if sessions
-                    else "Set up your connection first / 请先完成连接设置",
+                    else "请先完成连接设置",
                 }
             )
             await websocket.close(code=1008)
@@ -202,7 +202,7 @@ def create_app(*, settings_path, model_type, tokenizer, model_server_url, model_
             )
             name = Path(artifacts[index]["path"]).name
         except (ValueError, KeyError, OSError, RuntimeError):
-            raise HTTPException(404, "Result is unavailable / 结果暂不可用") from None
+            raise HTTPException(404, "结果暂不可用") from None
         return Response(
             data,
             media_type="application/octet-stream",

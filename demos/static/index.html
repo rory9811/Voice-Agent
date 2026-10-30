@@ -1,335 +1,201 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="description" content="Video and audio duplex conversations with Realtime-Venus." />
+    <meta name="description" content="视频全双工和音频双工的实时语音对话。" />
     <title>Realtime Venus</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232f5bea' stroke-width='2.8' stroke-linecap='round'%3E%3Cpath d='M5 10v4M12 5v14M19 8v8'/%3E%3C/svg%3E" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232d2d2d' stroke-width='2.8' stroke-linecap='round'%3E%3Cpath d='M5 10v4M12 5v14M19 8v8'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/assets/style.css" />
   </head>
-  <body data-phase="idle" data-mode="camera">
+  <body data-mode="camera" data-phase="idle">
     <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <symbol id="i-mic" viewBox="0 0 24 24">
-        <rect x="9" y="2" width="6" height="12" rx="3" />
-        <path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8" />
-      </symbol>
-      <symbol id="i-mic-off" viewBox="0 0 24 24">
-        <path d="m3 3 18 18M9 9v3a3 3 0 0 0 5 2M9 5a3 3 0 0 1 6 0v4m-10 1v2a7 7 0 0 0 12 5m2-7v2c0 .7-.1 1.4-.3 2M12 19v3m-4 0h8" />
-      </symbol>
-      <symbol id="i-camera" viewBox="0 0 24 24">
-        <rect x="2" y="5" width="14" height="14" rx="3" />
-        <path d="m16 9 6-3v12l-6-3" />
-      </symbol>
-      <symbol id="i-close" viewBox="0 0 24 24">
-        <path d="m6 6 12 12M6 18 18 6" />
-      </symbol>
-      <symbol id="i-sound-off" viewBox="0 0 24 24">
-        <path d="m11 4-6 5H2v6h3l6 5zM16 9l6 6m0-6-6 6" />
-      </symbol>
-      <symbol id="i-stop" viewBox="0 0 24 24">
-        <rect x="6" y="6" width="12" height="12" rx="2" />
-      </symbol>
-      <symbol id="i-tasks" viewBox="0 0 24 24">
-        <path d="m4 6 2 2 3-3M4 16l2 2 3-3M13 7h7M13 17h7" />
-      </symbol>
-      <symbol id="i-clear" viewBox="0 0 24 24">
-        <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5m4-5v5" />
-      </symbol>
-      <symbol id="i-sound" viewBox="0 0 24 24">
-        <path d="m11 4-6 5H2v6h3l6 5zM16 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14" />
-      </symbol>
-      <symbol id="i-settings" viewBox="0 0 24 24">
-        <path d="M4 7h7m6 0h3M4 17h3m6 0h7" />
-        <circle cx="14" cy="7" r="3" />
-        <circle cx="10" cy="17" r="3" />
-      </symbol>
-      <symbol id="i-check" viewBox="0 0 24 24">
-        <path d="m5 12 4 4L19 6" />
-      </symbol>
-      <symbol id="i-download" viewBox="0 0 24 24">
-        <path d="M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4" />
-      </symbol>
-      <symbol id="i-chevron" viewBox="0 0 24 24">
-        <path d="m9 5 7 7-7 7" />
-      </symbol>
+      <symbol id="i-camera" viewBox="0 0 24 24"><path d="m22 8-6 4 6 4V8Z" /><rect x="2" y="6" width="14" height="12" rx="2" /></symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3" /></symbol>
+      <symbol id="i-mic-off" viewBox="0 0 24 24"><path d="m3 3 18 18M9 9v3a3 3 0 0 0 5 2.6M15 11V5a3 3 0 0 0-5.7-1.3M19 10v2a7 7 0 0 1-.9 3.4M5 10v2a7 7 0 0 0 11 5.7M12 19v3" /></symbol>
+      <symbol id="i-sound" viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4V5ZM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13" /></symbol>
+      <symbol id="i-sound-off" viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4V5ZM16 9l6 6M22 9l-6 6" /></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="m7 4 13 8-13 8V4Z" /></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5" /></symbol>
+      <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-8 8H4l2-3.5A8 8 0 1 1 21 12Z" /></symbol>
+      <symbol id="i-wave" viewBox="0 0 24 24"><path d="M5 10v4M12 5v14M19 8v8" /></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12" /></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 5 5L20 7" /></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 20h16" /></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></symbol>
     </svg>
-    <header class="header">
-      <div class="header-left">
-        <div class="wordmark"><span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 10v4M12 5v14M19 8v8"/></svg></span><h1>Realtime Venus</h1></div>
-        <nav class="mode-tabs" aria-label="Input mode">
-          <button class="mode-tab" data-mode="camera" aria-pressed="true"><svg class="icon"><use href="#i-camera" /></svg><span data-i18n="tabVideo">Video Full-Duplex</span></button>
-          <button class="mode-tab" data-mode="audio" aria-pressed="false"><svg class="icon"><use href="#i-mic" /></svg><span data-i18n="tabAudio">Audio Duplex</span></button>
+
+    <header class="topbar">
+      <div class="topbar-side">
+        <h1>Realtime Venus</h1>
+        <nav class="modes" aria-label="模式">
+          <button class="mode" data-mode="camera" aria-pressed="true">视频全双工</button>
+          <button class="mode" data-mode="audio" aria-pressed="false">音频双工</button>
         </nav>
       </div>
-      <div class="header-right">
-        <span id="model-name" class="model-name"></span>
-        <span id="connection-state" class="connection"><span class="status-dot"></span><span data-i18n="available">Ready</span></span>
-        <button id="tasks-toggle" class="task-pill" hidden aria-controls="task-tray" aria-expanded="false">
-          <svg class="icon"><use href="#i-tasks" /></svg><span id="task-count">0</span> <span data-i18n="tasks">tasks</span>
-        </button>
-        <button id="settings-button" class="icon-button" data-label="settings" aria-label="Settings">
-          <svg class="icon"><use href="#i-settings" /></svg>
-        </button>
-        <button id="language-button" class="language-button" aria-label="Switch to Chinese">中</button>
+      <div class="topbar-side">
+        <button id="settings-button" class="plain-button">设置</button>
+        <span id="service-state" class="badge" role="status">连接中…</span>
       </div>
     </header>
-    <main class="main">
-      <div class="col-left">
-        <section class="panel-media" aria-label="Camera and microphone">
-          <div id="floor-chip" class="floor-chip" hidden><span class="floor-mark" aria-hidden="true"><i></i><i></i><i></i></span><span id="floor-label" aria-live="polite"></span><time id="lamp-timer"></time></div>
-          <video id="preview-video" muted playsinline hidden></video>
-          <div id="media-placeholder" class="media-placeholder">
-            <svg class="icon"><use id="placeholder-icon" href="#i-camera" /></svg>
-            <span id="placeholder-label"></span>
+
+    <aside id="notice" class="notice" hidden>
+      <span id="notice-text"></span>
+      <button id="notice-action" class="plain-button" hidden>去设置</button>
+      <button id="notice-close" class="notice-close" aria-label="关闭提示" hidden><svg class="icon"><use href="#i-close" /></svg></button>
+    </aside>
+
+    <main class="layout">
+      <div class="column">
+        <section class="media-card" aria-label="画面和麦克风">
+          <div id="lamp" class="lamp" hidden><i></i>LIVE <time id="lamp-time">00:00</time></div>
+          <div class="screen">
+            <video id="preview" muted playsinline hidden></video>
+            <div id="screen-empty" class="screen-empty"><svg class="icon"><use href="#i-camera" /></svg><span>开始对话后打开摄像头</span></div>
           </div>
-          <div id="mic-visualizer" class="mic-visualizer" hidden>
-            <div class="mic-heading">
-              <span class="mic-identity"><svg class="icon"><use id="mic-wave-icon" href="#i-mic" /></svg><span id="mic-wave-label">Your voice</span></span>
-            </div>
-            <canvas id="mic-waveform" aria-hidden="true"></canvas>
-            <span class="sr-only" data-i18n="waveformDescription">Live microphone waveform.</span>
+          <div class="wave">
+            <canvas id="wave-canvas" aria-hidden="true" hidden></canvas>
+            <div id="wave-empty" class="wave-empty"><svg class="icon"><use href="#i-mic" /></svg><span id="wave-empty-text">麦克风波形</span></div>
           </div>
         </section>
+
+        <div class="column-row">
+          <section class="card">
+            <h2>设备</h2>
+            <label class="field"><span>麦克风</span><select id="microphone-device"><option value="">系统默认</option></select></label>
+            <label class="field" id="camera-field"><span>摄像头</span><select id="camera-device"><option value="">系统默认</option></select></label>
+          </section>
+          <section class="card">
+            <h2>状态</h2>
+            <dl class="stats">
+              <div><dt>状态</dt><dd id="stat-phase" aria-live="polite">空闲</dd></div>
+              <div><dt>模型</dt><dd id="stat-model" title="">—</dd></div>
+              <div><dt>时长</dt><dd id="stat-time">—</dd></div>
+              <div><dt>麦克风</dt><dd id="stat-mic">—</dd></div>
+              <div><dt>扬声器</dt><dd id="stat-speaker">—</dd></div>
+              <div><dt>后台任务</dt><dd id="stat-tasks">0</dd></div>
+            </dl>
+          </section>
+        </div>
       </div>
-      <div class="col-right">
-        <section class="card panel-dialog">
-          <div class="panel-heading">
-            <h2 data-i18n="historyTitle">Conversation</h2>
-            <div class="panel-actions">
-              <button id="save-transcript" class="text-button" disabled><svg class="icon"><use href="#i-download" /></svg><span data-i18n="saveTranscript">Save</span></button>
-              <button id="reset-button" class="text-button" disabled><svg class="icon"><use href="#i-clear" /></svg><span data-i18n="newConversation">Clear</span></button>
+
+      <div class="column">
+        <details id="tasks" class="card tasks">
+          <summary><h2>后台任务</h2><span id="tasks-count" class="tasks-count"></span><svg class="icon"><use href="#i-chevron-down" /></svg></summary>
+          <p id="tasks-empty" class="muted">模型把任务交给后台后，会显示在这里。</p>
+          <div id="tasks-list" class="tasks-list" aria-live="polite"></div>
+        </details>
+
+        <section class="card conversation">
+          <div class="conversation-head">
+            <h2>对话</h2>
+            <div>
+              <button id="save-transcript" class="link-button" disabled><svg class="icon"><use href="#i-download" /></svg>保存</button>
+              <button id="clear-transcript" class="link-button" disabled><svg class="icon"><use href="#i-trash" /></svg>清空</button>
             </div>
           </div>
           <div id="transcript" class="transcript" aria-live="polite">
-            <p class="empty-copy" data-i18n="historyEmpty">What Realtime Venus says appears here once you start.</p>
+            <div id="transcript-empty" class="transcript-empty"><svg class="icon"><use href="#i-chat" /></svg><span>开始对话后，这里显示模型说的话</span></div>
           </div>
         </section>
-        <aside id="task-tray" class="card task-tray" aria-labelledby="task-title" aria-hidden="true" inert>
-          <div class="panel-heading">
-            <h2 id="task-title" data-i18n="taskTitle">Background tasks</h2>
-            <button id="close-tasks" class="icon-button" data-label="minimize" aria-label="Minimize tasks"><svg class="icon"><use href="#i-chevron" /></svg></button>
-          </div>
-          <div id="task-list" class="task-list" aria-live="polite"></div>
-        </aside>
       </div>
-      <div class="panel-controls">
-        <p id="control-hint" class="control-hint"></p>
-        <div class="control-buttons">
-          <button id="mute-mic" class="ctrl-btn icon-only" hidden aria-pressed="false" data-label="muteMic" aria-label="Mute microphone"><svg class="icon"><use href="#i-mic" /></svg></button>
-          <button id="start-button" class="ctrl-btn primary"><svg class="icon"><use id="start-icon" href="#i-camera" /></svg><span id="start-label" data-i18n="start">Start conversation</span></button>
-          <button id="stop-button" class="ctrl-btn danger" hidden><svg class="icon"><use href="#i-stop" /></svg><span id="stop-label" data-i18n="end">End conversation</span></button>
-          <button id="mute-output" class="ctrl-btn icon-only" hidden aria-pressed="false" data-label="muteOutput" aria-label="Mute speaker"><svg class="icon"><use href="#i-sound" /></svg></button>
-        </div>
-        <div class="control-side">
-          <button id="devices-button" class="text-button" popovertarget="device-menu"><span data-i18n="devices">Devices</span></button>
-        </div>
-      </div>
-    </main>
-    <div id="device-menu" class="device-menu" popover>
-      <h2 data-i18n="devices">Devices</h2>
-      <label><span data-i18n="microphone">Microphone</span><select id="microphone-device"><option value="" data-i18n="defaultDevice">System default</option></select></label>
-      <label id="camera-field"><span data-i18n="camera">Camera</span><select id="camera-device"><option value="" data-i18n="defaultDevice">System default</option></select></label>
-      <p class="field-hint" data-i18n="deviceHint">Device names appear after you allow access.</p>
-    </div>
-    <dialog
-      id="settings-dialog"
-      class="dialog settings-dialog"
-      aria-labelledby="settings-title"
-    >
-      <div class="dialog-heading">
-        <div>
-          <h2 id="settings-title" data-i18n="settings">Settings</h2>
-        </div>
-        <button
-          class="icon-button dialog-close"
-          data-label="close"
-          aria-label="Close"
-        >
-          <svg class="icon"><use href="#i-close" /></svg>
-        </button>
-      </div>
-      <section id="settings-guidance" class="settings-guidance" role="status" hidden>
-        <strong data-i18n="setupTitle">Finish Settings before your first conversation</strong>
-        <p id="settings-guidance-copy"></p>
-        <ul id="settings-issues"></ul>
-      </section>
-      <form id="settings-form" novalidate>
-        <section id="agent-login-panel" class="agent-panel">
-          <label><span data-i18n="taskAgent">Task agent</span
-            ><select id="task-agent">
-              <option value="codex">Codex</option>
-              <option value="claude">Claude Code</option>
-            </select></label>
-          <p class="field-hint" data-i18n="backendHint">Background tasks use this computer’s existing Codex connection.</p>
-          <p id="agent-login-status" class="login-state" role="status"></p>
-          <div id="agent-login-steps" class="login-steps" hidden>
-            <p id="agent-login-help"></p>
-            <div class="login-command"><code id="agent-login-command"></code
-              ><button id="copy-login-command" type="button" class="secondary-button" data-i18n="copy">Copy</button></div>
-          </div>
-          <button id="recheck-login" type="button" class="secondary-button" data-i18n="agentRecheck">Recheck login</button>
-        </section>
-        <label><span data-i18n="workspace">Task workspace</span>
-          <input id="backend-workspace" required autocomplete="off" spellcheck="false" aria-describedby="workspace-hint" />
-        </label>
-        <p id="workspace-hint" class="field-hint" data-i18n="workspaceHint">Required. For example workspace: relative paths are stored under deploy/web/data on this computer.</p>
 
-        <fieldset>
-          <legend data-i18n="responses">Your conversation</legend>
-          <label
-            ><span data-i18n="replyLanguage">Preferred reply language</span
-            ><select id="reply-language">
-              <option value="zh">中文</option>
-              <option value="en">English</option>
-            </select></label
-          >
-          <label>
-            <span data-i18n="proactiveProgress">Speak task progress automatically</span>
-            <select id="proactive-progress" aria-describedby="proactive-progress-hint">
-              <option value="false" data-i18n="proactiveProgressOff">Off (default)</option>
-              <option value="true" data-i18n="proactiveProgressOn">On — I agree to spoken progress updates</option>
-            </select>
+      <section class="controls" aria-label="对话控制">
+        <button id="mute-mic" class="control" aria-pressed="false" disabled><svg class="icon"><use href="#i-mic" /></svg><span>麦克风静音</span></button>
+        <button id="mute-speaker" class="control" aria-pressed="false" disabled><svg class="icon"><use href="#i-sound" /></svg><span>扬声器静音</span></button>
+        <span class="controls-divider"></span>
+        <button id="stop" class="control danger" disabled><svg class="icon"><use href="#i-stop" /></svg><span>结束</span></button>
+        <button id="start" class="control primary"><svg class="icon"><use href="#i-play" /></svg><span>开始</span></button>
+      </section>
+    </main>
+
+    <dialog id="settings" class="settings" aria-labelledby="settings-title">
+      <header class="settings-head">
+        <h2 id="settings-title">设置</h2>
+        <button class="icon-button" id="settings-close" aria-label="关闭设置"><svg class="icon"><use href="#i-close" /></svg></button>
+      </header>
+      <form id="settings-form" class="settings-body" novalidate>
+        <section id="settings-issues-box" class="issues" role="status" hidden>
+          <strong>保存前请先处理：</strong>
+          <ul id="settings-issues"></ul>
+        </section>
+
+        <section class="settings-section">
+          <label class="field"><span>任务执行器</span>
+            <select id="task-agent"><option value="codex">Codex</option><option value="claude">Claude Code</option></select>
           </label>
-          <p id="proactive-progress-hint" class="field-hint" data-i18n="proactiveProgressHint">
-            When enabled, new progress is spoken in one short sentence. Final results
-            and progress you ask for are always available. Applies to new conversations.
-          </p>
-          <label>
-            <span data-i18n="lengthPenalty">Speaking length (length_penalty)</span>
-            <input id="length-penalty" type="number" min="0.1" max="5"
-              step="any" value="0.8" required aria-describedby="length-penalty-hint" />
-          </label>
-          <p id="length-penalty-hint" class="field-hint" data-i18n="lengthPenaltyHint">
-            Default: 0.8. Below 1 encourages earlier turn endings; 1 keeps the
-            original behavior; above 1 encourages longer turns. Applies to new conversations.
-          </p>
-        </fieldset>
-        <details class="backend-settings">
-          <summary>
-            <span data-i18n="backendSettings">Task connection</span
-            ><svg class="icon"><use href="#i-chevron" /></svg>
-          </summary>
-          <label
-            ><span data-i18n="backendModel">Backend model</span
-            ><input
-              id="backend-model"
-              placeholder="Default"
-              autocomplete="off" /></label
-          ><label
-            ><span data-i18n="backendEffort">Task reasoning effort</span
-            ><select id="backend-effort">
-              <option value="" data-i18n="effortDefault">Codex default</option>
-              <option value="minimal" data-i18n="effortMinimal">Minimal</option>
-              <option value="low" data-i18n="effortLow">Low · faster</option>
-              <option value="medium" data-i18n="effortMedium">Medium</option>
-              <option value="high" data-i18n="effortHigh">High</option>
-              <option value="xhigh" data-i18n="effortXhigh">Extra high</option>
-              <option value="max" data-i18n="effortMax">Max</option>
-            </select></label>
-          <fieldset>
-            <legend data-i18n="routingSettings">Task routing</legend>
-            <label><span data-i18n="routingMode">Task mode</span>
-              <select id="routing-mode">
-                <option value="general" data-i18n="routingGeneral">General · direct (default)</option>
-                <option value="auto" data-i18n="routingAuto">Auto · automatic routing</option>
-              </select></label>
-            <p class="field-hint" data-i18n="routingModeHint">General sends each request straight to the task agent. Auto first chooses how to handle it.</p>
-            <fieldset id="auto-routing-options" hidden disabled>
-            <legend data-i18n="autoRoutingSettings">Auto routing settings</legend>
-            <p class="field-hint" data-i18n="routingHint">Only used in Auto mode. Low effort is recommended for faster routing.</p>
-            <label><span data-i18n="modelProvider">Provider</span>
-              <select id="routing-provider">
-                <option value="codex" class="agent-option">Codex</option>
-                <option value="gemini" data-i18n="geminiOfficial">Gemini</option>
-              </select></label>
-            <label><span data-i18n="routingModel">Routing model</span>
-              <input id="routing-model" autocomplete="off" /></label>
-            <p class="field-hint" data-i18n="modelInheritHint">Blank model: Codex inherits the task model; Gemini uses the default Gemini model below.</p>
-            <label><span data-i18n="reasoningEffort">Reasoning effort</span>
-              <select id="routing-effort">
-              <option value="minimal" data-i18n="effortMinimal">Minimal</option>
-              <option value="low" data-i18n="effortLow">Low · faster</option>
-              <option value="medium" data-i18n="effortMedium">Medium</option>
-              <option value="high" data-i18n="effortHigh">High</option>
-              <option value="xhigh" data-i18n="effortXhigh">Extra high</option>
-              <option value="max" data-i18n="effortMax">Max</option>
-            </select></label>
-            <label><span data-i18n="routingTimeout">Routing time limit (seconds)</span>
-              <input id="routing-timeout" type="number" min="1" max="180" step="1" required /></label>
-            <p class="field-hint" data-i18n="routingTimeoutHint">Default: 30 seconds. A timeout reports an error without starting the task; it does not speed up a slow model.</p>
-            </fieldset>
-          </fieldset>
-          <fieldset>
-            <legend data-i18n="responseSettings">Progress and result summaries</legend>
-            <label><span data-i18n="modelProvider">Provider</span>
-              <select id="response-provider">
-                <option value="codex" class="agent-option">Codex</option>
-                <option value="gemini" data-i18n="geminiOfficial">Gemini</option>
-              </select></label>
-            <label><span data-i18n="responseModel">Summary model</span>
-              <input id="response-model" autocomplete="off" /></label>
-            <p class="field-hint" data-i18n="responseHint">Summarizes progress and final results. Independent of routing and multimodal.</p>
-            <label><span data-i18n="reasoningEffort">Reasoning effort</span>
-              <select id="response-effort">
-              <option value="minimal" data-i18n="effortMinimal">Minimal</option>
-              <option value="low" data-i18n="effortLow">Low · faster</option>
-              <option value="medium" data-i18n="effortMedium">Medium</option>
-              <option value="high" data-i18n="effortHigh">High</option>
-              <option value="xhigh" data-i18n="effortXhigh">Extra high</option>
-              <option value="max" data-i18n="effortMax">Max</option>
-            </select></label>
-          </fieldset>
-          <fieldset>
-            <legend data-i18n="multimodalSettings">Direct answers and multimodal understanding</legend>
-            <label><span data-i18n="modelProvider">Provider</span>
-              <select id="multimodal-provider">
-                <option value="codex" class="agent-option">Codex</option>
-                <option value="gemini" data-i18n="geminiOfficial">Gemini</option>
-              </select></label>
-            <label><span data-i18n="multimodalModel">Multimodal model</span>
-              <input id="multimodal-model" autocomplete="off" /></label>
-            <p id="multimodal-agent-audio-hint" class="field-hint" data-i18n="agentAudioHint" hidden>Codex supports text and images, but cannot understand audio. Choose Gemini for audio understanding.</p>
-            <p class="field-hint" data-i18n="multimodalHint">Used when Auto routes to multimodal. This does not change the streaming Omni model.</p>
-            <label><span data-i18n="reasoningEffort">Reasoning effort</span>
-              <select id="multimodal-effort">
-              <option value="minimal" data-i18n="effortMinimal">Minimal</option>
-              <option value="low" data-i18n="effortLow">Low · faster</option>
-              <option value="medium" data-i18n="effortMedium">Medium</option>
-              <option value="high" data-i18n="effortHigh">High</option>
-              <option value="xhigh" data-i18n="effortXhigh">Extra high</option>
-              <option value="max" data-i18n="effortMax">Max</option>
-            </select></label>
-          </fieldset>
-          <fieldset>
-            <legend data-i18n="geminiSettings">Official Gemini connection</legend>
-            <p class="field-hint" data-i18n="geminiHint">Calls go directly to Google. Used only by roles explicitly set to Gemini; General still uses Codex.</p>
-            <label><span data-i18n="geminiDefaultModel">Default Gemini model</span>
-              <input id="gemini-model" autocomplete="off" required /></label>
-            <label><span>Gemini API Key</span>
-              <input id="gemini-key" type="password" autocomplete="new-password" spellcheck="false" /></label>
-            <p id="gemini-key-status" class="field-hint"></p>
-            <p class="field-hint" data-i18n="geminiKeyHint">Leave blank to keep the saved key or set GEMINI_API_KEY in deploy/web/.env. Saved keys are never returned to the browser.</p>
-          </fieldset>
-          <p class="field-hint" data-i18n="effortHint">Save and start a new conversation to apply changes.</p>
-          <label
-            ><span data-i18n="agentPath">Codex executable</span
-            ><input id="agent-binary" required autocomplete="off"
-          /></label>
+          <p id="login-state" class="login-state" role="status"></p>
+          <div id="login-steps" class="login-steps" hidden>
+            <p id="login-help"></p>
+            <div class="login-command"><code id="login-command"></code><button id="copy-command" type="button" class="plain-button">复制</button></div>
+          </div>
+          <button id="recheck-login" type="button" class="plain-button">重新检查登录</button>
+        </section>
+
+        <label class="field"><span>任务目录</span>
+          <input id="workspace" required autocomplete="off" spellcheck="false" placeholder="例如 workspace" />
+          <small>任务文件保存在这里。相对路径位于本机的 deploy/web/data 下。</small>
+        </label>
+
+        <label class="check"><input id="proactive-progress" type="checkbox" /><span>自动播报任务进度<small>有新进展时用一句话说出来。结果总会告诉你。</small></span></label>
+        <label class="field"><span>发言长度（length_penalty）</span>
+          <input id="length-penalty" type="number" min="0.1" max="5" step="any" required />
+          <small>默认 0.8。小于 1 更早结束发言，大于 1 说得更长。</small>
+        </label>
+
+        <details class="group">
+          <summary>任务执行<svg class="icon"><use href="#i-chevron-down" /></svg></summary>
+          <label class="field"><span>模型</span><input id="agent-model" autocomplete="off" placeholder="留空使用执行器默认模型" /></label>
+          <label class="field"><span>推理强度</span><select id="agent-effort" class="effort"></select></label>
+          <label class="field"><span id="agent-binary-label">程序路径</span><input id="agent-binary" required autocomplete="off" spellcheck="false" /></label>
         </details>
-        <div class="dialog-footer">
-          <p id="settings-message" class="field-hint" role="status"></p
-          ><button
-            type="submit"
-            class="secondary-button"
-            id="save-settings"
-            data-i18n="saveSettings"
-          >
-            Save settings
-          </button>
-        </div>
+
+        <details class="group">
+          <summary>任务模式<svg class="icon"><use href="#i-chevron-down" /></svg></summary>
+          <label class="field"><span>模式</span>
+            <select id="routing-mode"><option value="general">直接执行（默认）</option><option value="auto">自动路由</option></select>
+            <small>直接执行把每个请求交给执行器；自动路由会先判断怎么处理。</small>
+          </label>
+          <fieldset id="routing-options" hidden>
+            <label class="field"><span>提供方</span><select id="routing-provider" class="provider"></select></label>
+            <label class="field"><span>模型</span><input id="routing-model" autocomplete="off" placeholder="留空使用任务模型" /></label>
+            <label class="field"><span>推理强度</span><select id="routing-effort" class="effort"></select></label>
+            <label class="field"><span>时间上限（秒）</span><input id="routing-timeout" type="number" min="1" max="180" step="1" required /></label>
+          </fieldset>
+        </details>
+
+        <details class="group">
+          <summary>进度和结果整理<svg class="icon"><use href="#i-chevron-down" /></svg></summary>
+          <label class="field"><span>提供方</span><select id="response-provider" class="provider"></select></label>
+          <label class="field"><span>模型</span><input id="response-model" autocomplete="off" placeholder="留空使用任务模型" /></label>
+          <label class="field"><span>推理强度</span><select id="response-effort" class="effort"></select></label>
+        </details>
+
+        <details class="group">
+          <summary>多模态理解<svg class="icon"><use href="#i-chevron-down" /></svg></summary>
+          <label class="field"><span>提供方</span><select id="multimodal-provider" class="provider"></select></label>
+          <label class="field"><span>模型</span><input id="multimodal-model" autocomplete="off" placeholder="留空使用任务模型" /></label>
+          <label class="field"><span>推理强度</span><select id="multimodal-effort" class="effort"></select></label>
+          <small id="multimodal-audio-hint" class="muted" hidden>当前执行器能理解文字和图片，不能理解音频。需要理解音频时请选 Gemini。</small>
+        </details>
+
+        <details class="group">
+          <summary>Gemini 连接<svg class="icon"><use href="#i-chevron-down" /></svg></summary>
+          <label class="field"><span>默认模型</span><input id="gemini-model" autocomplete="off" required /></label>
+          <label class="field"><span>API Key</span>
+            <input id="gemini-key" type="password" autocomplete="new-password" spellcheck="false" />
+            <small id="gemini-key-status"></small>
+          </label>
+        </details>
+
+        <footer class="settings-foot">
+          <p id="settings-message" class="muted" role="status"></p>
+          <button id="save-settings" type="submit" class="control primary compact">保存设置</button>
+        </footer>
       </form>
     </dialog>
+
     <div id="toast" class="toast" role="status" hidden></div>
     <script type="module" src="/assets/app.js"></script>
   </body>

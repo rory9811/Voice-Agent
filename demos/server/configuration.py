@@ -42,7 +42,7 @@ class WebConfiguration:
     def agent_login(self, agent):
         """Login state of any agent, so the page can answer before it is saved."""
         if agent not in self.logins:
-            raise ValueError("Unknown task agent")
+            raise ValueError("未知的任务执行器")
         return self.logins[agent].check(self.load().data[agent]["command"][0], force=True)
 
     def status(self, *, force_login=False):
@@ -69,15 +69,15 @@ class WebConfiguration:
     def save(self, body):
         if not isinstance(body, dict) or body.get("revision") != self.revision():
             raise RuntimeError(
-                "Settings changed; reopen the panel / 配置已变化，请重新打开"
+                "配置已变化，请重新打开"
             )
         data = copy.deepcopy(body.get("data"))
         if not isinstance(data, dict):
-            raise ValueError("Invalid configuration")
+            raise ValueError("配置无效")
         current = self.load()
         gemini = data.setdefault("gemini", {})
         if not isinstance(gemini, dict):
-            raise ValueError("Invalid Gemini configuration")
+            raise ValueError("Gemini 配置无效")
         # A blank write-only field means retain the stored key; never return it.
         if gemini.get("api_key", "") == "":
             gemini["api_key"] = current.gemini.api_key

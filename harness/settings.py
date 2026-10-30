@@ -148,7 +148,7 @@ class HarnessSetup:
             for call in (self.routing, self.responses, self.multimodal)
         ):
             raise ValueError(
-                "Role providers must be the task agent or gemini / 各环节只能使用当前任务执行器或 Gemini"
+                "各环节只能使用当前任务执行器或 Gemini"
             )
         self.gemini = settings(GeminiConfig(), self.data["gemini"])
         self.feedback = settings(FeedbackConfig(), self.data["feedback"])
@@ -185,15 +185,15 @@ class HarnessSetup:
     def check(self, *, web=True):
         problems = []
         if web and not self.data["workspace"]:
-            problems.append("Configure Task workspace / 请填写任务工作目录")
+            problems.append("请填写任务工作目录")
         if not shutil.which(self.general.command[0]):
             name = {"codex": "Codex", "claude": "Claude Code"}[self.general.agent]
-            problems.append(f"{name} executable not found / 找不到 {name} 程序")
+            problems.append(f"找不到 {name} 程序")
         calls = [self.responses, self.multimodal]
         if self.routing.mode == "auto":
             calls.append(self.routing)
         if any(call.provider == "gemini" for call in calls) and not self.gemini.resolved_key():
-            problems.append("Configure an official Gemini API key / 请配置官方 Gemini API Key")
+            problems.append("请配置官方 Gemini API Key")
         return {"ok": not problems, "problems": problems}
 
 

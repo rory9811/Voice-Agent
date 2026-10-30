@@ -61,7 +61,7 @@ class ClaudeSettingsTests(unittest.TestCase):
         setup = HarnessSetup(claude_data(), "/tmp/config.json")
         with patch("shutil.which", return_value=None):
             problems = setup.check()["problems"]
-        self.assertIn("Claude Code executable not found / 找不到 Claude Code 程序", problems)
+        self.assertIn("找不到 Claude Code 程序", problems)
 
     def test_template_keeps_codex_default(self):
         self.assertEqual(HarnessSetup(template(), "/tmp/config.json").general.agent, "codex")
