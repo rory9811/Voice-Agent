@@ -1,42 +1,5 @@
 import { t } from "./i18n.js";
 
-/** Estimate voiced fundamental frequency with a normalized difference function.
- * Unvoiced sound and silence have no reliable pitch and return zero.
- */
-export function estimatePitch(samples, sampleRate) {
-  const step = Math.max(1, Math.floor(sampleRate / 12000));
-  const signal = new Float32Array(Math.floor(samples.length / step));
-  let energy = 0;
-  for (let i = 0; i < signal.length; i++) {
-    for (let j = 0; j < step; j++) signal[i] += samples[i * step + j] / step;
-    energy += signal[i] ** 2;
-  }
-  if (Math.sqrt(energy / signal.length) < 0.003) return 0;
-  const rate = sampleRate / step;
-  const minLag = Math.floor(rate / 600);
-  const maxLag = Math.min(Math.ceil(rate / 70), Math.floor(signal.length / 2));
-  const count = signal.length - maxLag;
-  const difference = new Float32Array(maxLag + 1);
-  let sum = 0;
-  difference[0] = 1;
-  for (let lag = 1; lag <= maxLag; lag++) {
-    let value = 0;
-    for (let i = 0; i < count; i++) value += (signal[i] - signal[i + lag]) ** 2;
-    sum += value;
-    difference[lag] = sum ? (value * lag) / sum : 1;
-  }
-  for (let lag = Math.max(2, minLag); lag < maxLag; lag++) {
-    if (difference[lag] >= 0.15) continue;
-    while (lag + 1 < maxLag && difference[lag + 1] < difference[lag]) lag++;
-    const left = difference[lag - 1], center = difference[lag], right = difference[lag + 1];
-    const curve = left - 2 * center + right;
-    const refined = lag + (curve ? Math.max(-0.5, Math.min(0.5, (left - right) / (2 * curve))) : 0);
-    const pitch = rate / refined;
-    return pitch >= 70 && pitch <= 600 ? pitch : 0;
-  }
-  return 0;
-}
-
 /** Draw actual microphone samples, independently of model speech or network speed. */
 export class MicrophoneWaveform {
   constructor(container) {
@@ -44,12 +7,9 @@ export class MicrophoneWaveform {
     this.canvas = container.querySelector("canvas");
     this.context = this.canvas.getContext("2d");
     this.label = container.querySelector("#mic-wave-label");
-    this.pitchLabel = container.querySelector("#mic-pitch");
     this.icon = container.querySelector("use");
     this.active = false;
     this.muted = false;
-    this.pitch = 0;
-    this.lastPitchTime = 0;
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(this.canvas);
     this.color = "#4ade80";
@@ -71,16 +31,8 @@ export class MicrophoneWaveform {
     this.container.classList.toggle("muted", muted);
     this.icon.setAttribute("href", muted ? "#i-mic-off" : "#i-mic");
     this.label.textContent = t(muted ? "micMuted" : "yourVoice");
-    if (!active || muted) {
-      this.pitch = 0;
-      this.lastPitchTime = 0;
-    }
-    this.renderPitch();
   }
-  renderPitch() {
-    this.pitchLabel.textContent = this.pitch ? `${t("pitch")} · ${Math.round(this.pitch)} Hz` : "";
-  }
-  draw(frame, time) {
+  draw(frame) {
     if (!this.active || document.hidden) return;
     const ctx = this.context, w = this.width, h = this.height;
     if (!w || !h) return;
@@ -93,11 +45,6 @@ export class MicrophoneWaveform {
       }
     }
     const audible = samples && Math.sqrt(energy / samples.length) >= 0.0025;
-    if (!audible || time - this.lastPitchTime >= 100) {
-      this.pitch = audible ? estimatePitch(samples, frame.sampleRate) : 0;
-      this.lastPitchTime = time;
-      this.renderPitch();
-    }
     ctx.clearRect(0, 0, w, h);
     ctx.strokeStyle = this.baseline;
     ctx.lineWidth = 1;

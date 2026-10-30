@@ -104,15 +104,8 @@ export class TaskTray {
           element("h3", "task-objective"),
           element("p", "task-progress"),
         );
-        const track = element("div", "task-track");
-        track.setAttribute("aria-hidden", "true");
-        track.append(element("span"));
-        card.append(track);
         const actions = element("div", "task-actions");
-        actions.append(
-          element("span", "task-stage"),
-          element("button", "task-cancel"),
-        );
+        actions.append(element("button", "task-cancel"));
         card.append(actions, element("div", "task-files"));
         this.nodes.set(work.work_id, card);
         this.list.prepend(card);
@@ -145,9 +138,6 @@ export class TaskTray {
                 ? "taskReturnHint"
                 : "taskDefault",
         );
-      card.querySelector(".task-stage").textContent = this.active
-        ? t(state)
-        : t("conversationEnded");
       const cancel = card.querySelector(".task-cancel");
       cancel.textContent = t(
         work.state === "cancelling" ? "taskCancelling" : "cancel",

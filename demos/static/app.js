@@ -127,53 +127,39 @@ function render() {
   }
   const previewing = state.mode === "camera" && Boolean(capture.stream);
   const micActive = Boolean(capture.stream) && !state.stopping;
+  const modeIcon = state.mode === "camera" ? "#i-camera" : "#i-mic";
   $("preview-video").hidden = !previewing;
   microphoneWaveform.setState(micActive, state.muted);
   $("media-placeholder").hidden = previewing || micActive;
-  $("placeholder-icon").setAttribute("href", state.mode === "camera" ? "#i-camera" : "#i-mic");
+  $("placeholder-icon").setAttribute("href", modeIcon);
   $("placeholder-label").textContent = t(state.mode === "camera" ? "cameraOff" : "microphoneOff");
-  $("status-lamp").hidden = !state.connected;
+  $("floor-chip").hidden = !state.connected && !state.connecting;
+  $("floor-label").textContent = t(
+    state.connecting ? "connecting" : state.phase === "speaking" ? "speaking" : "listening",
+  );
   $("lamp-timer").textContent = state.connected ? elapsed() : "";
   $("camera-field").hidden = state.mode !== "camera";
   $("microphone-device").disabled = $("camera-device").disabled = busy;
-  $("start-button").hidden = state.connected;
-  $("start-button").disabled = state.connecting || state.stopping || state.checkingSettings || !state.inputModes.length;
-  $("setup-banner").hidden = busy || state.configured !== false;
+  $("start-button").hidden = state.connected || state.connecting;
+  $("start-button").disabled = state.stopping || state.checkingSettings || !state.inputModes.length;
+  $("start-icon").setAttribute("href", state.configured === false ? "#i-settings" : modeIcon);
   $("start-label").textContent = t(
     state.checkingSettings
       ? "checkingSettings"
-      : state.configured === false && !busy
-        ? "completeSettings"
-        : state.stopping
-          ? "ending"
-          : state.connecting
-            ? "connecting"
-            : "start",
-  );
-  $("stop-button").hidden = !(state.connected || state.connecting);
-  $("stop-button").disabled = state.stopping;
-  $("mute-mic").hidden = !state.connected;
-  $("mute-mic").setAttribute("aria-pressed", String(state.muted));
-  $("mute-mic")
-    .querySelector("use")
-    .setAttribute("href", state.muted ? "#i-mic-off" : "#i-mic");
-  $("mute-output").hidden = !state.connected;
-  $("mute-output").setAttribute("aria-pressed", String(state.outputMuted));
-  $("status-phase").textContent = t(
-    state.connecting
-      ? "connecting"
       : state.stopping
         ? "ending"
-        : state.phase === "speaking"
-          ? "speaking"
-          : state.connected
-            ? "listening"
-            : !state.online
-              ? "offline"
-              : state.configured === false
-                ? "setupNeeded"
-                : "available",
+        : state.configured === false
+          ? "completeSettings"
+          : "start",
   );
+  $("stop-button").hidden = !(state.connected || state.connecting);
+  $("stop-label").textContent = t(state.connecting ? "cancel" : "end");
+  $("mute-mic").hidden = !state.connected;
+  $("mute-mic").setAttribute("aria-pressed", String(state.muted));
+  $("mute-mic").querySelector("use").setAttribute("href", state.muted ? "#i-mic-off" : "#i-mic");
+  $("mute-output").hidden = !state.connected;
+  $("mute-output").setAttribute("aria-pressed", String(state.outputMuted));
+  $("mute-output").querySelector("use").setAttribute("href", state.outputMuted ? "#i-sound-off" : "#i-sound");
   let hint = state.mode === "camera" ? "cameraHint" : "startHint";
   if (state.connected) hint = state.muted ? "mutedHint" : "liveHint";
   if (state.connecting) hint = "connecting";
@@ -181,7 +167,9 @@ function render() {
   if (!busy && state.configured === false) hint = "notConfigured";
   $("control-hint").textContent = t(hint);
   const status = $("connection-state");
+  const needsSetup = !busy && state.online && state.configured === false;
   status.classList.toggle("pending", state.connecting || state.stopping);
+  status.classList.toggle("setup", needsSetup);
   status.classList.toggle("offline", !state.online);
   status.lastElementChild.textContent = state.stopping
     ? t("ending")
@@ -189,8 +177,10 @@ function render() {
       ? t("connecting")
       : state.connected
         ? t("live")
-        : t(!state.online ? "offline" : state.configured === false ? "setupNeeded" : "available");
-  $("reset-button").disabled = state.connecting || state.stopping;
+        : t(!state.online ? "offline" : needsSetup ? "setupNeeded" : "available");
+  $("save-transcript").disabled = !state.transcript.size;
+  $("reset-button").disabled =
+    state.connecting || state.stopping || (!state.transcript.size && !state.connected);
 }
 function elapsed() {
   const seconds = Math.max(
@@ -449,11 +439,15 @@ function clearTranscript() {
   empty.dataset.i18n = "historyEmpty";
   empty.textContent = t("historyEmpty");
   $("transcript").append(empty);
+  render();
 }
 function appendText(text, id) {
   if (!text) return;
   const key = id || `text-${state.transcript.size}`;
   let entry = state.transcript.get(key);
+  // Follow new text only for someone already at the end, not someone reading back.
+  const log = $("transcript");
+  const following = log.scrollHeight - log.scrollTop - log.clientHeight < 48;
   if (!entry) {
     $("transcript").querySelector(".empty-copy")?.remove();
     const node = document.createElement("article");
@@ -471,10 +465,11 @@ function appendText(text, id) {
     $("transcript").append(node);
     entry = { text: "", node, paragraph, time: Date.now() };
     state.transcript.set(key, entry);
+    render();
   }
   entry.text += text;
   entry.paragraph.textContent = entry.text;
-  $("transcript").scrollTop = $("transcript").scrollHeight;
+  if (following) log.scrollTop = log.scrollHeight;
 }
 async function downloadArtifact(workId, artifact) {
   if (!state.sessionId || !state.token) {
@@ -849,7 +844,6 @@ $("mute-output").onclick = () => {
   render();
 };
 $("settings-button").onclick = () => void openSettings();
-$("complete-settings").onclick = () => void openSettings(true);
 for (const dialog of document.querySelectorAll("dialog")) {
   dialog.querySelector(".dialog-close").onclick = () => dialog.close();
   dialog.addEventListener("click", (event) => {
@@ -866,6 +860,7 @@ for (const dialog of document.querySelectorAll("dialog")) {
 }
 $("reset-button").onclick = async () => {
   const restart = state.connected;
+  if (restart && !confirm(t("restartHint"))) return;
   try {
     await player.prime();
     await stopSession();
@@ -876,10 +871,6 @@ $("reset-button").onclick = async () => {
   } catch {}
 };
 $("save-transcript").onclick = () => {
-  if (!state.transcript.size) {
-    notify(t("noTranscript"));
-    return;
-  }
   saveBlob(
     new Blob(
       [
@@ -901,6 +892,12 @@ window.addEventListener("venus-language", () => {
   render();
   if (state.configuration) renderAgentLogin();
   void enumerateDevices();
+});
+window.addEventListener("keydown", (event) => {
+  if (event.key.toLowerCase() !== "m" || !state.connected || event.repeat) return;
+  if (event.metaKey || event.ctrlKey || event.altKey) return;
+  if (event.target.closest?.("input, select, textarea, dialog")) return;
+  $("mute-mic").click();
 });
 window.addEventListener("pagehide", () => {
   state.epoch++;

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="description" content="Video and audio duplex conversations with Realtime-Venus." />
     <title>Realtime Venus</title>
-    <link rel="icon" type="image/png" href="/assets/venus-logo.png" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232f5bea' stroke-width='2.8' stroke-linecap='round'%3E%3Cpath d='M5 10v4M12 5v14M19 8v8'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/assets/style.css" />
   </head>
   <body data-phase="idle" data-mode="camera">
@@ -24,6 +24,18 @@
       <symbol id="i-close" viewBox="0 0 24 24">
         <path d="m6 6 12 12M6 18 18 6" />
       </symbol>
+      <symbol id="i-sound-off" viewBox="0 0 24 24">
+        <path d="m11 4-6 5H2v6h3l6 5zM16 9l6 6m0-6-6 6" />
+      </symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24">
+        <rect x="6" y="6" width="12" height="12" rx="2" />
+      </symbol>
+      <symbol id="i-tasks" viewBox="0 0 24 24">
+        <path d="m4 6 2 2 3-3M4 16l2 2 3-3M13 7h7M13 17h7" />
+      </symbol>
+      <symbol id="i-clear" viewBox="0 0 24 24">
+        <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v5m4-5v5" />
+      </symbol>
       <symbol id="i-sound" viewBox="0 0 24 24">
         <path d="m11 4-6 5H2v6h3l6 5zM16 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14" />
       </symbol>
@@ -31,12 +43,6 @@
         <path d="M4 7h7m6 0h3M4 17h3m6 0h7" />
         <circle cx="14" cy="7" r="3" />
         <circle cx="10" cy="17" r="3" />
-      </symbol>
-      <symbol id="i-reset" viewBox="0 0 24 24">
-        <path d="M20 7a9 9 0 1 0 1 9M20 2v5h-5" />
-      </symbol>
-      <symbol id="i-spark" viewBox="0 0 24 24">
-        <path d="m12 3 2.4 6.6L21 12l-6.6 2.4L12 21l-2.4-6.6L3 12l6.6-2.4z" />
       </symbol>
       <symbol id="i-check" viewBox="0 0 24 24">
         <path d="m5 12 4 4L19 6" />
@@ -50,16 +56,17 @@
     </svg>
     <header class="header">
       <div class="header-left">
-        <h1 id="model-name">Realtime Venus</h1>
+        <div class="wordmark"><span class="mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 10v4M12 5v14M19 8v8"/></svg></span><h1>Realtime Venus</h1></div>
         <nav class="mode-tabs" aria-label="Input mode">
-          <button class="mode-tab" data-mode="camera" aria-pressed="true" data-i18n="tabVideo">Video Full-Duplex</button>
-          <button class="mode-tab" data-mode="audio" aria-pressed="false" data-i18n="tabAudio">Audio Duplex</button>
+          <button class="mode-tab" data-mode="camera" aria-pressed="true"><svg class="icon"><use href="#i-camera" /></svg><span data-i18n="tabVideo">Video Full-Duplex</span></button>
+          <button class="mode-tab" data-mode="audio" aria-pressed="false"><svg class="icon"><use href="#i-mic" /></svg><span data-i18n="tabAudio">Audio Duplex</span></button>
         </nav>
       </div>
       <div class="header-right">
-        <span id="connection-state" class="connection"><span class="status-dot"></span><span data-i18n="available">Ready when you are</span></span>
+        <span id="model-name" class="model-name"></span>
+        <span id="connection-state" class="connection"><span class="status-dot"></span><span data-i18n="available">Ready</span></span>
         <button id="tasks-toggle" class="task-pill" hidden aria-controls="task-tray" aria-expanded="false">
-          <svg class="icon"><use href="#i-spark" /></svg><span id="task-count">0</span> <span data-i18n="tasks">tasks</span>
+          <svg class="icon"><use href="#i-tasks" /></svg><span id="task-count">0</span> <span data-i18n="tasks">tasks</span>
         </button>
         <button id="settings-button" class="icon-button" data-label="settings" aria-label="Settings">
           <svg class="icon"><use href="#i-settings" /></svg>
@@ -67,15 +74,10 @@
         <button id="language-button" class="language-button" aria-label="Switch to Chinese">中</button>
       </div>
     </header>
-    <aside id="setup-banner" class="notice-banner" hidden>
-      <div><strong data-i18n="setupTitle">Finish Settings before your first conversation</strong>
-        <span data-i18n="setupIntro">A few required settings are missing. Open Settings to see what to complete.</span></div>
-      <button id="complete-settings" class="secondary-button" data-i18n="completeSettings">Complete Settings</button>
-    </aside>
     <main class="main">
       <div class="col-left">
-        <section class="panel-media" aria-label="Media">
-          <div id="status-lamp" class="status-lamp" hidden><span class="dot"></span><span>LIVE</span><span id="lamp-timer"></span></div>
+        <section class="panel-media" aria-label="Camera and microphone">
+          <div id="floor-chip" class="floor-chip" hidden><span class="floor-mark" aria-hidden="true"><i></i><i></i><i></i></span><span id="floor-label" aria-live="polite"></span><time id="lamp-timer"></time></div>
           <video id="preview-video" muted playsinline hidden></video>
           <div id="media-placeholder" class="media-placeholder">
             <svg class="icon"><use id="placeholder-icon" href="#i-camera" /></svg>
@@ -84,53 +86,52 @@
           <div id="mic-visualizer" class="mic-visualizer" hidden>
             <div class="mic-heading">
               <span class="mic-identity"><svg class="icon"><use id="mic-wave-icon" href="#i-mic" /></svg><span id="mic-wave-label">Your voice</span></span>
-              <span id="mic-pitch" class="mic-pitch"></span>
             </div>
             <canvas id="mic-waveform" aria-hidden="true"></canvas>
-            <span class="sr-only" data-i18n="waveformDescription">Live microphone waveform. Height follows volume; closer waves indicate higher pitch.</span>
+            <span class="sr-only" data-i18n="waveformDescription">Live microphone waveform.</span>
           </div>
-        </section>
-        <section class="panel card">
-          <h2 data-i18n="devices">Your devices</h2>
-          <label><span data-i18n="microphone">Microphone</span><select id="microphone-device"><option value="" data-i18n="defaultDevice">System default</option></select></label>
-          <label id="camera-field"><span data-i18n="camera">Camera</span><select id="camera-device"><option value="" data-i18n="defaultDevice">System default</option></select></label>
-          <p class="field-hint" data-i18n="deviceHint">Device names appear after you allow access.</p>
-        </section>
-        <section class="panel card">
-          <h2 data-i18n="statusTitle">Status</h2>
-          <p id="status-phase" class="status-phase" aria-live="polite"></p>
-          <p id="control-hint" class="field-hint"></p>
         </section>
       </div>
       <div class="col-right">
-        <section class="panel card panel-dialog">
+        <section class="card panel-dialog">
           <div class="panel-heading">
             <h2 data-i18n="historyTitle">Conversation</h2>
             <div class="panel-actions">
-              <button id="save-transcript" class="text-button" data-i18n="saveTranscript">Save conversation</button>
-              <button id="reset-button" class="text-button"><svg class="icon"><use href="#i-reset" /></svg><span data-i18n="newConversation">Start fresh</span></button>
+              <button id="save-transcript" class="text-button" disabled><svg class="icon"><use href="#i-download" /></svg><span data-i18n="saveTranscript">Save</span></button>
+              <button id="reset-button" class="text-button" disabled><svg class="icon"><use href="#i-clear" /></svg><span data-i18n="newConversation">Clear</span></button>
             </div>
           </div>
           <div id="transcript" class="transcript" aria-live="polite">
-            <p class="empty-copy" data-i18n="historyEmpty">The things Venus says will find a home here.</p>
+            <p class="empty-copy" data-i18n="historyEmpty">What Realtime Venus says appears here once you start.</p>
           </div>
         </section>
-        <aside id="task-tray" class="panel card task-tray" aria-labelledby="task-title" aria-hidden="true" inert>
+        <aside id="task-tray" class="card task-tray" aria-labelledby="task-title" aria-hidden="true" inert>
           <div class="panel-heading">
             <h2 id="task-title" data-i18n="taskTitle">Background tasks</h2>
             <button id="close-tasks" class="icon-button" data-label="minimize" aria-label="Minimize tasks"><svg class="icon"><use href="#i-chevron" /></svg></button>
           </div>
-          <p class="field-hint" data-i18n="taskHint">Keep talking. Venus will bring the results back to you.</p>
           <div id="task-list" class="task-list" aria-live="polite"></div>
         </aside>
       </div>
       <div class="panel-controls">
-        <button id="mute-mic" class="ctrl-btn icon-only" hidden aria-pressed="false" data-label="muteMic" aria-label="Mute microphone"><svg class="icon"><use href="#i-mic" /></svg></button>
-        <button id="start-button" class="ctrl-btn primary"><span id="start-label" data-i18n="start">Start a conversation</span></button>
-        <button id="stop-button" class="ctrl-btn danger" hidden><span data-i18n="end">End conversation</span></button>
-        <button id="mute-output" class="ctrl-btn icon-only" hidden aria-pressed="false" data-label="muteOutput" aria-label="Mute speaker"><svg class="icon"><use href="#i-sound" /></svg></button>
+        <p id="control-hint" class="control-hint"></p>
+        <div class="control-buttons">
+          <button id="mute-mic" class="ctrl-btn icon-only" hidden aria-pressed="false" data-label="muteMic" aria-label="Mute microphone"><svg class="icon"><use href="#i-mic" /></svg></button>
+          <button id="start-button" class="ctrl-btn primary"><svg class="icon"><use id="start-icon" href="#i-camera" /></svg><span id="start-label" data-i18n="start">Start conversation</span></button>
+          <button id="stop-button" class="ctrl-btn danger" hidden><svg class="icon"><use href="#i-stop" /></svg><span id="stop-label" data-i18n="end">End conversation</span></button>
+          <button id="mute-output" class="ctrl-btn icon-only" hidden aria-pressed="false" data-label="muteOutput" aria-label="Mute speaker"><svg class="icon"><use href="#i-sound" /></svg></button>
+        </div>
+        <div class="control-side">
+          <button id="devices-button" class="text-button" popovertarget="device-menu"><span data-i18n="devices">Devices</span></button>
+        </div>
       </div>
     </main>
+    <div id="device-menu" class="device-menu" popover>
+      <h2 data-i18n="devices">Devices</h2>
+      <label><span data-i18n="microphone">Microphone</span><select id="microphone-device"><option value="" data-i18n="defaultDevice">System default</option></select></label>
+      <label id="camera-field"><span data-i18n="camera">Camera</span><select id="camera-device"><option value="" data-i18n="defaultDevice">System default</option></select></label>
+      <p class="field-hint" data-i18n="deviceHint">Device names appear after you allow access.</p>
+    </div>
     <dialog
       id="settings-dialog"
       class="dialog settings-dialog"
